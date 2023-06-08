@@ -248,13 +248,12 @@ class MemcachedClient {
                uint16_t key_len, const uint8_t *val, uint32_t val_len,
                uint32_t *pckt_length) {
     // Form memcached UDP header.
-    MemcacheUdpHeader hdr = {
-        .request_id = {static_cast<uint8_t>((request_id >> 8) & 0xff),
-                       static_cast<uint8_t>(request_id & 0xff)},
-        .udp_sequence = {static_cast<uint8_t>((sequence_n >> 8) & 0xff),
-                         static_cast<uint8_t>(sequence_n & 0xff)},
-        .udp_total = {0, 1},
-        .RESERVED = {0, 0}};
+    MemcacheUdpHeader hdr = {{static_cast<uint8_t>((request_id >> 8) & 0xff),
+                              static_cast<uint8_t>(request_id & 0xff)},
+                             {static_cast<uint8_t>((sequence_n >> 8) & 0xff),
+                              static_cast<uint8_t>(sequence_n & 0xff)},
+                             {0, 1},
+                             {0, 0}};
     std::memcpy(tx_buff, &hdr, sizeof(MemcacheUdpHeader));
 
     // Form packet.
@@ -266,21 +265,19 @@ class MemcachedClient {
       std::cerr << "Packet size of " << total_length << " is too large\n";
       return -1;
     }
-    ReqHdr req_hdr = {
-        .magic = 0x80,
-        .opcode = 0x01,  // set
-        .key_length = {static_cast<uint8_t>((key_len >> 8) & 0xff),
+    ReqHdr req_hdr = {0x80,
+                      0x01,  // set
+                      {static_cast<uint8_t>((key_len >> 8) & 0xff),
                        static_cast<uint8_t>(key_len & 0xff)},
-        .extra_length = kExtraSize,
-        .data_type = 0x00,
-        .RESERVED = 0x00,
-        .total_body_length =
-            {static_cast<uint8_t>((total_payld_length >> 24) & 0xff),
-             static_cast<uint8_t>((total_payld_length >> 16) & 0xff),
-             static_cast<uint8_t>((total_payld_length >> 8) & 0xff),
-             static_cast<uint8_t>(total_payld_length & 0xff)},
-        .opaque = 0x00,
-        .CAS = 0x00};
+                      kExtraSize,
+                      0x00,
+                      {0x00, 0x00},
+                      {static_cast<uint8_t>((total_payld_length >> 24) & 0xff),
+                       static_cast<uint8_t>((total_payld_length >> 16) & 0xff),
+                       static_cast<uint8_t>((total_payld_length >> 8) & 0xff),
+                       static_cast<uint8_t>(total_payld_length & 0xff)},
+                      {0x00, 0x00, 0x00, 0x00},
+                      {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
     // Fill packet: unlimited storage time.
     uint32_t extra[2] = {0x00, 0x00};
     std::memcpy(tx_buff + sizeof(MemcacheUdpHeader), &req_hdr, sizeof(ReqHdr));
@@ -300,13 +297,12 @@ class MemcachedClient {
   int form_get(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
                uint16_t key_len, uint32_t *pckt_length) {
     // Form memcached UDP header.
-    MemcacheUdpHeader hdr = {
-        .request_id = {static_cast<uint8_t>((request_id >> 8) & 0xff),
-                       static_cast<uint8_t>(request_id & 0xff)},
-        .udp_sequence = {static_cast<uint8_t>((sequence_n >> 8) & 0xff),
-                         static_cast<uint8_t>(sequence_n & 0xff)},
-        .udp_total = {0, 1},
-        .RESERVED = {0, 0}};
+    MemcacheUdpHeader hdr = {{static_cast<uint8_t>((request_id >> 8) & 0xff),
+                              static_cast<uint8_t>(request_id & 0xff)},
+                             {static_cast<uint8_t>((sequence_n >> 8) & 0xff),
+                              static_cast<uint8_t>(sequence_n & 0xff)},
+                             {0, 1},
+                             {0, 0}};
     std::memcpy(tx_buff, &hdr, sizeof(MemcacheUdpHeader));
 
     // Form packet.
@@ -317,21 +313,19 @@ class MemcachedClient {
       std::cerr << "Packet size of " << total_length << " is too large\n";
       return -1;
     }
-    ReqHdr req_hdr = {
-        .magic = 0x80,
-        .opcode = 0x00,  // get
-        .key_length = {static_cast<uint8_t>((key_len >> 8) & 0xff),
+    ReqHdr req_hdr = {0x80,
+                      0x00,  // get
+                      {static_cast<uint8_t>((key_len >> 8) & 0xff),
                        static_cast<uint8_t>(key_len & 0xff)},
-        .extra_length = 0x00,
-        .data_type = 0x00,
-        .RESERVED = 0x00,
-        .total_body_length =
-            {static_cast<uint8_t>((total_payld_length >> 24) & 0xff),
-             static_cast<uint8_t>((total_payld_length >> 16) & 0xff),
-             static_cast<uint8_t>((total_payld_length >> 8) & 0xff),
-             static_cast<uint8_t>(total_payld_length & 0xff)},
-        .opaque = 0x00,
-        .CAS = 0x00};
+                      0x00,
+                      0x00,
+                      {0x00, 0x00},
+                      {static_cast<uint8_t>((total_payld_length >> 24) & 0xff),
+                       static_cast<uint8_t>((total_payld_length >> 16) & 0xff),
+                       static_cast<uint8_t>((total_payld_length >> 8) & 0xff),
+                       static_cast<uint8_t>(total_payld_length & 0xff)},
+                      {0x00, 0x00, 0x00, 0x00},
+                      {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
     // Fill packet.
     std::memcpy(tx_buff + sizeof(MemcacheUdpHeader), &req_hdr, sizeof(ReqHdr));
     std::memcpy(tx_buff + sizeof(MemcacheUdpHeader) + sizeof(ReqHdr), key,
