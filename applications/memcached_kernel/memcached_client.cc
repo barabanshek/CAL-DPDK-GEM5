@@ -8,6 +8,7 @@
 #include <tuple>
 #include <vector>
 
+DEFINE_string(server_mac, "11:22:33:44:55:66", "MAC address of the memcached server.");
 DEFINE_string(server_ip, "127.0.0.1", "IP address of the memcached server.");
 DEFINE_uint32(server_port, 11211, "UDP port of the memcached server.");
 DEFINE_bool(blocking, false,
@@ -50,7 +51,11 @@ int main(int argc, char* argv[]) {
             << (FLAGS_blocking ? "blocking" : "non-blocking")
             << " memcached client"
             << "\n";
+#ifdef _USE_DPDK_CLIENT_
+  MemcachedClient client(FLAGS_server_mac);
+#else
   MemcachedClient client(FLAGS_server_ip, FLAGS_server_port);
+#endif
   client.Init();
 
   // Generate dataset.

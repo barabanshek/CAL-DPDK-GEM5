@@ -62,6 +62,8 @@
 #include <sys/sysctl.h>
 #endif
 
+#include "../dpdk.h"
+
 /*
  * forward declarations
  */
@@ -6221,6 +6223,24 @@ int main (int argc, char **argv) {
 
     /* Initialize the uriencode lookup table. */
     uriencode_init();
+
+    /* Initialize DPDK. */
+    struct DPDKObj dpdk;
+    if (InitDPDK(&dpdk)) {
+        fprintf(stderr, "Failed to initialize DPDK.\n");
+        return -1;
+    }
+    fprintf(stderr, "DPDK-version of memcached is ready to accept requests!\n");
+
+    struct rte_mbuf *packets[128];
+    while (!stop_main_loop) {
+        uint16_t received_pckt_cnt = rte_eth_rx_burst(0, 0, packets, 1);
+        if (received_pckt_cnt == 0) {
+            continue;
+        } else {
+            fprintf(stderr, "Smth is recved!\n");
+        }
+    }
 
     /* enter the event loop */
     while (!stop_main_loop) {

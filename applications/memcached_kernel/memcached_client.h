@@ -13,6 +13,10 @@
 #include <string>
 #include <thread>
 
+#ifdef _USE_DPDK_CLIENT_
+  #include <dpdk.h>
+#endif
+
 static constexpr size_t kClSize = 64;
 static constexpr size_t kMaxPacketSize = 1500;
 static constexpr size_t kSockTimeout = 1;  // sec.
@@ -34,6 +38,16 @@ class MemcachedClient {
 
   enum DispatchMode { kBlocking = 0x0, kNonBlocking = 0x1 };
 
+#ifdef _USE_DPDK_CLIENT_
+  // Constructor for DPDK networking.
+  MemcachedClient(const std::string& server_mac_addr)
+      : serverMacAddrStr(server_mac_addr),
+        dispatchMode(DispatchMode::kBlocking),
+        tx_buff(nullptr),
+        rx_buff(nullptr),
+        runRecvThread(false) {}
+#else
+  // Constructor for Kernel networking.
   MemcachedClient(const std::string &server_hostname, uint16_t port)
       : serverHostname(server_hostname),
         port(port),
@@ -42,6 +56,7 @@ class MemcachedClient {
         tx_buff(nullptr),
         rx_buff(nullptr),
         runRecvThread(false) {}
+#endif
 
   ~MemcachedClient() {
     if (dispatchMode == DispatchMode::kNonBlocking) {
@@ -51,13 +66,31 @@ class MemcachedClient {
       }
     }
 
+#ifndef _USE_DPDK_CLIENT_
     if (sock != -1) close(sock);
+#endif
+
     if (tx_buff != nullptr) std::free(tx_buff);
     if (rx_buff != nullptr) std::free(rx_buff);
   }
 
   int Init() {
     // Init networking.
+#ifdef _USE_DPDK_CLIENT_
+    std::cout << "Initializing Kernel-bypass (DPDK) networking" << std::endl;
+    int ret = rte_ether_unformat_addr(serverMacAddrStr.c_str(), &serverMacAddr);
+    if (ret) {
+      std::cerr << "Wrong server MAC address format." << std::endl;
+      return -1;
+    }
+
+    ret = InitDPDK(&dpdkObj);
+    if (ret) {
+      std::cerr << "Failed to initialize network!" << std::endl;
+      return -1;
+    }
+#else
+    std::cout << "Initializing Kernel (socket) networking" << std::endl;
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(port);
     if (inet_pton(AF_INET, serverHostname.c_str(), &(serverAddress.sin_addr)) <=
@@ -80,6 +113,7 @@ class MemcachedClient {
       std::cerr << "Faile to set socket timeout." << std::endl;
       return -1;
     }
+#endif
 
     // Init buffers.
     tx_buff =
@@ -188,10 +222,17 @@ class MemcachedClient {
 
  private:
   // Net things.
+#ifdef _USE_DPDK_CLIENT_
+  std::string serverMacAddrStr;
+  rte_ether_addr serverMacAddr;
+  DPDKObj dpdkObj;
+#else
   std::string serverHostname;
   uint16_t port;
   sockaddr_in serverAddress;
   int sock;
+#endif
+
   DispatchMode dispatchMode;
 
   // Buffers.
@@ -390,6 +431,37 @@ class MemcachedClient {
   }
 
   int send(size_t length) {
+#ifdef _USE_DPDK_CLIENT_
+    assert (sizeof(rte_ether_hdr) + length <= kMTUStandardFrames);
+
+    // Create packet.
+    rte_mbuf *created_pkt = rte_pktmbuf_alloc(dpdkObj.mpool);
+    if (created_pkt == nullptr) {
+      std::cerr << "Failed to get packet mbuf.\n";
+      return -1;
+    }
+    size_t pkt_size = sizeof(rte_ether_hdr) + length;
+    created_pkt->data_len = pkt_size;
+    created_pkt->pkt_len = pkt_size;
+
+    // Append Ethernet header.
+    rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(created_pkt, rte_ether_hdr *);
+    rte_ether_addr_copy(&dpdkObj.pmd_eth_addrs[dpdkObj.pmd_port_to_use], &eth_hdr->s_addr);
+    rte_ether_addr_copy(&serverMacAddr, &eth_hdr->d_addr);
+    eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+
+    // Append data.
+    uint8_t* pckt_data = (uint8_t *)eth_hdr + sizeof(rte_ether_hdr);
+    std::memcpy(pckt_data, tx_buff, length);
+
+    // Send packet.
+    uint16_t pckt_sent = rte_eth_tx_burst(dpdkObj.pmd_ports[dpdkObj.pmd_port_to_use], 0, &created_pkt, 1);
+    if (pckt_sent != 1) {
+      std::cerr << "Failed to send packet.\n";
+      rte_pktmbuf_free(created_pkt);
+      return -1;
+    }
+#else
     ssize_t bytesSent =
         sendto(sock, tx_buff, length, MSG_CONFIRM,
                (const struct sockaddr *)&serverAddress, sizeof(serverAddress));
@@ -398,15 +470,19 @@ class MemcachedClient {
       close(sock);
       return -1;
     }
+#endif
 
     return 0;
   }
 
   void recv() {
+#ifdef _USE_DPDK_CLIENT_
+#else
     sockaddr_in serverAddress_rvc;
     socklen_t len;
     recvfrom(sock, rx_buff, kMaxPacketSize, 0,
              (struct sockaddr *)&serverAddress_rvc, &len);
+#endif
   }
 
   // Runs in nonBlocking mode to receive responses.
