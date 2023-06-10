@@ -23,20 +23,7 @@ find_package(gflags REQUIRED)
 #
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-# DPDK stuff.
-SET (DPDK_CPP_FLAGS "-I$ENV{RTE_SDK}/lib/librte_eal/include"
-	            "-I$ENV{RTE_SDK}/build"
-	            "-I$ENV{RTE_SDK}/config"
-	            "-I$ENV{RTE_SDK}/lib/librte_eal/linux/include"
-	            "-I$ENV{RTE_SDK}/lib/librte_ethdev"
-	            "-I$ENV{RTE_SDK}/lib/librte_net"
-	            "-I$ENV{RTE_SDK}/lib/librte_mbuf"
-	            "-I$ENV{RTE_SDK}/lib/librte_mempool"
-	            "-I$ENV{RTE_SDK}/lib/librte_ring")
-
-SET (DPDK_LD_FLAGS "-L$ENV{RDMA_CORE}/build/lib/ \
-        -L$ENV{RTE_SDK}/build/drivers \
-        -fno-inline-atomics \
+SET (DPDK_LD_FLAGS "-fno-inline-atomics \
         -lpthread \
         -Wl,--whole-archive \
         -l:librte_flow_classify.a \
@@ -119,7 +106,7 @@ if (USE_DPDK_NETWORKING)
         endif()
 
         add_custom_target(memcached ALL
-                        /usr/bin/make -f "${CMAKE_CURRENT_SOURCE_DIR}/memcached/Makefile" CPPFLAGS=${DPDK_CPP_FLAGS} LDFLAGS=${DPDK_LD_FLAGS}
+                        /usr/bin/make -f "${CMAKE_CURRENT_SOURCE_DIR}/memcached/Makefile" LDFLAGS=${DPDK_LD_FLAGS}
                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/memcached)
 endif()
 

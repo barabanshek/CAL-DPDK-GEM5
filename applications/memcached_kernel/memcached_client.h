@@ -432,33 +432,9 @@ class MemcachedClient {
 
   int send(size_t length) {
 #ifdef _USE_DPDK_CLIENT_
-    assert (sizeof(rte_ether_hdr) + length <= kMTUStandardFrames);
-
-    // Create packet.
-    rte_mbuf *created_pkt = rte_pktmbuf_alloc(dpdkObj.mpool);
-    if (created_pkt == nullptr) {
-      std::cerr << "Failed to get packet mbuf.\n";
-      return -1;
-    }
-    size_t pkt_size = sizeof(rte_ether_hdr) + length;
-    created_pkt->data_len = pkt_size;
-    created_pkt->pkt_len = pkt_size;
-
-    // Append Ethernet header.
-    rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(created_pkt, rte_ether_hdr *);
-    rte_ether_addr_copy(&dpdkObj.pmd_eth_addrs[dpdkObj.pmd_port_to_use], &eth_hdr->s_addr);
-    rte_ether_addr_copy(&serverMacAddr, &eth_hdr->d_addr);
-    eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
-
-    // Append data.
-    uint8_t* pckt_data = (uint8_t *)eth_hdr + sizeof(rte_ether_hdr);
-    std::memcpy(pckt_data, tx_buff, length);
-
-    // Send packet.
-    uint16_t pckt_sent = rte_eth_tx_burst(dpdkObj.pmd_ports[dpdkObj.pmd_port_to_use], 0, &created_pkt, 1);
-    if (pckt_sent != 1) {
-      std::cerr << "Failed to send packet.\n";
-      rte_pktmbuf_free(created_pkt);
+    int ret = SendOverDPDK(&dpdkObj, &serverMacAddr, tx_buff, length);
+    if (ret) {
+      std::cerr << "Failed to send data to the server." << std::endl;
       return -1;
     }
 #else

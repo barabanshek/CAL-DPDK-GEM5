@@ -180,4 +180,39 @@ static int InitDPDK(struct DPDKObj* dpdk_obj) {
     return 0;
 }
 
+static int SendOverDPDK(struct DPDKObj* dpdk_obj, const struct rte_ether_addr* dst_mac, const uint8_t* payload, size_t length) {
+    assert (sizeof(struct rte_ether_hdr) + length <= kMTUStandardFrames);
+
+    // Create packet.
+    struct rte_mbuf *created_pkt = rte_pktmbuf_alloc(dpdk_obj->mpool);
+    if (created_pkt == NULL) {
+      fprintf(stderr, "Failed to get packet mbuf.\n");
+      return -1;
+    }
+    size_t pkt_size = sizeof(struct rte_ether_hdr) + length;
+    created_pkt->data_len = pkt_size;
+    created_pkt->pkt_len = pkt_size;
+
+    // Append Ethernet header.
+    struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
+    rte_ether_addr_copy(&dpdk_obj->pmd_eth_addrs[dpdk_obj->pmd_port_to_use], &eth_hdr->s_addr);
+    rte_ether_addr_copy(dst_mac, &eth_hdr->d_addr);
+    eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+
+    // Append data.
+    uint8_t* pckt_data = (uint8_t *)eth_hdr + sizeof(struct rte_ether_hdr);
+    memcpy(pckt_data, payload, length);
+
+    // Send packet.
+    const uint16_t burst_size = 1;
+    uint16_t pckt_sent = rte_eth_tx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], 0, &created_pkt, burst_size);
+    if (pckt_sent != burst_size) {
+      fprintf(stderr, "Failed to send packet.\n");
+      rte_pktmbuf_free(created_pkt);
+      return -1;
+    }
+
+    return 0;
+}
+
 #endif
