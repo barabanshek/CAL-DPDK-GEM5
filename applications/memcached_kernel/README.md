@@ -31,12 +31,14 @@ This will build Kernel-based KV-load generator (client) which can be used with t
     * move to, say `rdma-core`
     * install RDMA-core as per instructions in the repo;
     * make sure the RDMA-core libraries are visible to `meson`, the only way I made it to work is by symlinking all libraries from `rdma-core/build/lib` to `/usr/local/lib/`;
+    * alternatively install RDMA-core via apt: `sudo apt-get install rdma-core`, but in this case, there might be issues finding libraries
 * build DPDK:
     * `cd dpdk-stable-20.11.3`
     * `meson setup build`
     * **IMPORTANT**: make sure the `Drivers Enabled` section of the output shows `mlx4, mlx5` drivers in it, otherwise DPDK will fail to detect the NICs
     * `cd build`
     * `ninja`
+    * `ninja install`
 * build things:
     * export DPDK and RDMA-core library path:
         * `export RTE_SDK=/<FULL_PATH>/dpdk-stable-20.11.3`
