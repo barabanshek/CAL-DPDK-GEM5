@@ -241,7 +241,7 @@ class MemcachedClient {
   DPDKObj dpdkObj;
 
   // Used to implement zero-copy packet recv. path.
-  uint8_t *rx_packets[kMaxBurst];
+  rte_mbuf *rx_packets[kMaxBurst];
 #else
   // Full Linux UDP/IP stack here.
   std::string serverHostname;
@@ -335,7 +335,8 @@ class MemcachedClient {
 
   Status parse_set_response(uint16_t *request_id, uint16_t *sequence_n) const {
 #ifdef _USE_DPDK_CLIENT_
-    const uint8_t *rx_buff_ptr = reinterpret_cast<uint8_t*>((rx_packets[0]) + sizeof(struct rte_ether_hdr));
+    rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(rx_packets[0], rte_ether_hdr *);
+    const uint8_t *rx_buff_ptr = reinterpret_cast<uint8_t*>(eth_hdr) + sizeof(struct rte_ether_hdr);
 #else
     const uint8_t *rx_buff_ptr = rx_buff;
 #endif
@@ -354,7 +355,7 @@ class MemcachedClient {
 
 #ifdef _USE_DPDK_CLIENT_
     // In DPDK stack, we need to free packets here.
-    FreeDPDKPacket((struct rte_mbuf*)(&rx_packets[0]));
+    FreeDPDKPacket(rx_packets[0]);
 #endif
 
     return status;
@@ -363,7 +364,8 @@ class MemcachedClient {
   Status parse_get_response(uint16_t *request_id, uint16_t *sequence_n,
                             uint8_t *val, uint32_t *val_len) const {
 #ifdef _USE_DPDK_CLIENT_
-    uint8_t *rx_buff_ptr = reinterpret_cast<uint8_t*>((rx_packets[0]) + sizeof(struct rte_ether_hdr));
+    rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(rx_packets[0], rte_ether_hdr *);
+    const uint8_t *rx_buff_ptr = reinterpret_cast<uint8_t*>(eth_hdr) + sizeof(struct rte_ether_hdr);
 #else
     uint8_t *rx_buff_ptr = rx_buff;
 #endif
@@ -371,7 +373,7 @@ class MemcachedClient {
     size_t h_size = HelperParseUdpHeader(reinterpret_cast<const MemcacheUdpHeader *>(rx_buff_ptr), request_id, sequence_n);
     rx_buff_ptr += h_size;
 
-    const RespHdr *rsp_hdr = reinterpret_cast<RespHdr *>(rx_buff_ptr);
+    const RespHdr *rsp_hdr = reinterpret_cast<const RespHdr *>(rx_buff_ptr);
     if (rsp_hdr->magic != 0x81) {
       std::cerr << "Wrong response received!\n";
       return kOtherError;
@@ -387,7 +389,7 @@ class MemcachedClient {
 
 #ifdef _USE_DPDK_CLIENT_
     // In DKD stack, we need to free packets here.
-    FreeDPDKPacket((struct rte_mbuf*)(&rx_packets[0]));
+    FreeDPDKPacket(rx_packets[0]);
 #endif
 
     return status;
@@ -441,6 +443,9 @@ class MemcachedClient {
     while (runRecvThread) {
       int pckt_cnt = recv();
       nonBlockRecvStat.totalRecved += static_cast<size_t>(pckt_cnt);
+      // Free packets.
+      for (int i=0; i<pckt_cnt; ++i)
+        FreeDPDKPacket(rx_packets[i]);
     }
   }
 };

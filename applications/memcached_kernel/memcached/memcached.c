@@ -137,9 +137,10 @@ int perform_set(const struct ReqHdr *p_hdr);
 int perform_get(const struct ReqHdr *p_hdr, uint8_t** val, uint32_t *val_len);
 
 static uint8_t rsp_buff[1500];  // TODO: make it better, i.e. avoid copying: can re-use packet.
-void parse_from_dpdk(const uint8_t *packet, struct DPDKObj *dpdk) {
-    const struct rte_ether_addr from_mac = ((struct rte_ether_hdr*)packet)->s_addr;
-    const uint8_t* pckt_data = packet + sizeof(struct rte_ether_hdr);
+void parse_from_dpdk(struct rte_mbuf *packet, struct DPDKObj *dpdk) {
+    struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(packet, struct rte_ether_hdr *);
+    const struct rte_ether_addr from_mac = eth_hdr->s_addr;
+    const uint8_t* pckt_data = (uint8_t*)eth_hdr + sizeof(struct rte_ether_hdr);
     struct MemcacheUdpHeader *hdr = (struct MemcacheUdpHeader*)pckt_data;
     if (hdr->RESERVED[0] != kMagicMagic[0] || hdr->RESERVED[1] != kMagicMagic[1]) {
         return;
@@ -6357,13 +6358,13 @@ int main (int argc, char **argv) {
     }
     fprintf(stderr, "DPDK-version of memcached is ready to accept requests!\n");
 
-    uint8_t *packets[kMaxBurst];
+    struct rte_mbuf* packets[kMaxBurst];
     while (!stop_main_loop) {
         uint16_t received_pckt_cnt = RecvOverDPDK(&dpdk, packets);
         if (received_pckt_cnt == 0) continue;
         for (int i = 0; i < received_pckt_cnt; ++i) {
             parse_from_dpdk(packets[i], &dpdk);
-            FreeDPDKPacket((struct rte_mbuf*)(packets[i]));
+            FreeDPDKPacket(packets[i]);
         }
     }
 

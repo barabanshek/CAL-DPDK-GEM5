@@ -181,7 +181,7 @@ static int InitDPDK(struct DPDKObj* dpdk_obj) {
 }
 
 static void FreeDPDKPacket(struct rte_mbuf* pckt) {
-    rte_pktmbuf_free_seg(pckt);
+    rte_pktmbuf_free(pckt);
 }
 
 // Send a single packet containing the payload of size length over DPDK.
@@ -226,7 +226,7 @@ static int SendOverDPDK(struct DPDKObj* dpdk_obj, const struct rte_ether_addr* d
 // Receive one or many packets and store their payloads in payload.
 // Returns the number of packets received.
 // This is a non-blocking call.
-static int RecvOverDPDK(struct DPDKObj* dpdk_obj, uint8_t **payload) {
+static int RecvOverDPDK(struct DPDKObj* dpdk_obj, struct rte_mbuf **pckts) {
     struct rte_mbuf *packets[kMaxBurst];
     const uint16_t ring_id = 0;
     uint16_t received_pckt_cnt = rte_eth_rx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, packets, kMaxBurst);
@@ -242,7 +242,7 @@ static int RecvOverDPDK(struct DPDKObj* dpdk_obj, uint8_t **payload) {
         }
 
         // Store the payload pointers.
-        *(payload + total_pcks) = (uint8_t*)eth_hdr;
+        *(pckts + total_pcks) = packets[i];
         ++total_pcks;
     }
 
