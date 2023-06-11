@@ -34,6 +34,9 @@ static volatile bool kCtlzArmed = false;
 void signal_callback_handler(int signum) {
   (void)(signum);
   kCtlzArmed = true;
+
+  // De-register the signal.
+  signal(SIGINT, SIG_DFL);
 }
 
 // ./memcached_client --server_ip=10.212.84.119 --blocking=false
