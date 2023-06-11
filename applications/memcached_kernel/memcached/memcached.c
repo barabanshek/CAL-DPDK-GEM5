@@ -136,29 +136,35 @@ enum transmit_result {
 int perform_set(const struct ReqHdr *p_hdr);
 int perform_get(const struct ReqHdr *p_hdr, uint8_t** val, uint32_t *val_len);
 
-static uint8_t rsp_buff[4096];  // TODO: make it better!
+static uint8_t rsp_buff[1500];  // TODO: make it better, i.e. avoid copying: can re-use packet.
 void parse_from_dpdk(const uint8_t *packet, struct DPDKObj *dpdk) {
     const struct rte_ether_addr from_mac = ((struct rte_ether_hdr*)packet)->s_addr;
     const uint8_t* pckt_data = packet + sizeof(struct rte_ether_hdr);
     struct MemcacheUdpHeader *hdr = (struct MemcacheUdpHeader*)pckt_data;
     if (hdr->RESERVED[0] != kMagicMagic[0] || hdr->RESERVED[1] != kMagicMagic[1]) {
         // Not our packet, skip.
+        FreeDPDKPacket((struct rte_mbuf*)packet);
         return;
     }
     pckt_data += sizeof(struct MemcacheUdpHeader);
+    const struct ReqHdr *p_hdr = (struct ReqHdr*)pckt_data;
+
+    // Prepare response.
+    uint8_t* rsp_buff_ptr = rsp_buff;
+    memcpy(rsp_buff_ptr, hdr, sizeof(struct MemcacheUdpHeader));
+    rsp_buff_ptr += sizeof(struct MemcacheUdpHeader);
+    struct RespHdr* rsp_hdr = (struct RespHdr*)rsp_buff_ptr;
+
+    memset(rsp_buff_ptr, 0x00, sizeof(struct RespHdr));
+    rsp_hdr->magic = 0x81;
+    rsp_hdr->opcode = p_hdr->opcode;
 
     // Parse type of request.
-    const struct ReqHdr *p_hdr = (struct ReqHdr*)pckt_data;
     if (p_hdr->opcode == 0x01) {
         // Set.
         int res = perform_set(p_hdr);
 
-        // Prepare response.
-        memcpy(rsp_buff, hdr, sizeof(struct MemcacheUdpHeader));
-        struct RespHdr *rsp_hdr = (struct RespHdr *)(rsp_buff + sizeof(struct MemcacheUdpHeader));
-        memset(rsp_hdr, 0x00, sizeof(struct RespHdr));
-        rsp_hdr->magic = 0x81;
-        rsp_hdr->opcode = 0x01;
+        // Set the response.
         if (res == 0) {
             // Send success.
             rsp_hdr->status[0] = 0x00;
@@ -175,12 +181,7 @@ void parse_from_dpdk(const uint8_t *packet, struct DPDKObj *dpdk) {
         uint32_t value_len;
         int res = perform_get(p_hdr, &value, &value_len);
 
-        // Prepare response.
-        memcpy(rsp_buff, hdr, sizeof(struct MemcacheUdpHeader));
-        struct RespHdr *rsp_hdr = (struct RespHdr *)(rsp_buff + sizeof(struct MemcacheUdpHeader));
-        memset(rsp_hdr, 0x00, sizeof(struct RespHdr));
-        rsp_hdr->magic = 0x81;
-        rsp_hdr->opcode = 0x00;
+        // Set the response.
         if (res == 0) {
             // Send success.
             uint32_t body_len = value_len;
@@ -199,6 +200,9 @@ void parse_from_dpdk(const uint8_t *packet, struct DPDKObj *dpdk) {
         // Send it.
         SendOverDPDK(dpdk, &from_mac, rsp_buff, sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr) + value_len);
     }
+
+    // Free memory.
+    // FreeDPDKPacket((struct rte_mbuf*)packet);
 }
 
 int perform_set(const struct ReqHdr *p_hdr) {
