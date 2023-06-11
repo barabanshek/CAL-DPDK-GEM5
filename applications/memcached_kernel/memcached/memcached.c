@@ -202,20 +202,11 @@ void parse_from_dpdk(const uint8_t *packet, struct DPDKObj *dpdk) {
 }
 
 int perform_set(const struct ReqHdr *p_hdr) {
-    // Get sizes.
-    uint16_t key_len =
-        p_hdr->key_length[1] | (p_hdr->key_length[0] << 8);
-    uint8_t extra_len = p_hdr->extra_length;
-    uint32_t total_body_len = p_hdr->total_body_length[3] |
-                              (p_hdr->total_body_length[2] << 8) |
-                              (p_hdr->total_body_length[1] << 16) |
-                              (p_hdr->total_body_length[0] << 24);
-    uint32_t val_len = total_body_len - extra_len - key_len;
-    // fprintf(stderr, "SET: p_hdr.magic: %x, .keylen: %u, .vallen: %u\n", p_hdr->magic, key_len, val_len);
-
-    // Get data.
-    uint8_t* key = (uint8_t*)p_hdr + sizeof(struct ReqHdr) + extra_len;
-    uint8_t* val = (uint8_t*)key + key_len;
+    uint8_t* key;
+    uint16_t key_len;
+    uint8_t* val;
+    uint32_t val_len;
+    HelperParseSetReqHeader(p_hdr, &key, &key_len, &val, &val_len);
 
     // Store.
     // Allocate item.
@@ -242,14 +233,9 @@ int perform_set(const struct ReqHdr *p_hdr) {
 }
 
 int perform_get(const struct ReqHdr *p_hdr, uint8_t** val, uint32_t *val_len) {
-    // Get sizes.
-    uint16_t key_len =
-        p_hdr->key_length[1] | (p_hdr->key_length[0] << 8);
-    uint8_t extra_len = p_hdr->extra_length;
-    // fprintf(stderr, "GET: p_hdr.magic: %x, .keylen: %u\n", p_hdr->magic, key_len);
-
-    // Get data.
-    uint8_t* key = (uint8_t*)p_hdr + sizeof(struct ReqHdr) + extra_len;
+    uint8_t* key;
+    uint16_t key_len;
+    HelperParseGetReqHeader(p_hdr, &key, &key_len);
 
     // Look-up.
     uint32_t hv;

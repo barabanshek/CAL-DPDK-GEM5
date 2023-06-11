@@ -70,6 +70,21 @@ static size_t HelperFormSetReqHeader(struct ReqHdr* hdr, uint16_t key_len, uint3
     return sizeof(struct ReqHdr) + total_payld_length;
 }
 
+static void HelperParseSetReqHeader(const struct ReqHdr* hdr, uint8_t** key, uint16_t* key_len, uint8_t** val, uint32_t* val_len) {
+  uint16_t key_len_ = hdr->key_length[1] | (hdr->key_length[0] << 8);
+  uint8_t extra_len_ = hdr->extra_length;
+  uint32_t total_body_len_ = (uint32_t)(hdr->total_body_length[3]) |
+                            (uint32_t)(hdr->total_body_length[2] << 8) |
+                            (uint32_t)(hdr->total_body_length[1] << 16) |
+                            (uint32_t)(hdr->total_body_length[0] << 24);
+  uint32_t val_len_ = total_body_len_ - extra_len_ - key_len_;
+
+  *key = (uint8_t*)hdr + sizeof(struct ReqHdr) + extra_len_;
+  *val = (uint8_t*)(*key) + key_len_;
+  *key_len = key_len_;
+  *val_len = val_len_;
+}
+
 static size_t HelperFormGetReqHeader(struct ReqHdr* hdr, uint16_t key_len) {
     uint32_t total_payld_length = key_len;
 
@@ -84,6 +99,14 @@ static size_t HelperFormGetReqHeader(struct ReqHdr* hdr, uint16_t key_len) {
     hdr->total_body_length[3] = (uint8_t)(total_payld_length & 0xff);
 
     return sizeof(struct ReqHdr) + total_payld_length;
+}
+
+static void HelperParseGetReqHeader(const struct ReqHdr* hdr, uint8_t** key, uint16_t* key_len) {
+  uint16_t key_len_ = hdr->key_length[1] | (hdr->key_length[0] << 8);
+  uint8_t extra_len_ = hdr->extra_length;
+
+  *key = (uint8_t*)hdr + sizeof(struct ReqHdr) + extra_len_;
+  *key_len = key_len_;
 }
 
 static size_t HelperParseUdpHeader(const struct MemcacheUdpHeader *udp_hdr, uint16_t *request_id, uint16_t *sequence_n) {
