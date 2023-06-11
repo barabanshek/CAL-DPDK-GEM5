@@ -165,7 +165,10 @@ class MemcachedClient {
     if (dispatchMode == DispatchMode::kBlocking) {
       uint16_t req_id_rcv;
       uint16_t seq_n_recv;
-      recv();
+      int n_pcks = recv();
+      if (n_pcks != 1)
+        return -1;
+
       int ret = parse_set_response(&req_id_rcv, &seq_n_recv);
       if (ret != kOK)  // || req_id_rcv != request_id)
         return -1;
@@ -191,7 +194,10 @@ class MemcachedClient {
 
       uint16_t req_id_rcv;
       uint16_t seq_n_recv;
-      recv();
+      int n_pcks = recv();
+      if (n_pcks != 1)
+        return -1;
+
       int ret =
           parse_get_response(&req_id_rcv, &seq_n_recv, val_out, val_out_length);
       if (ret != kOK)  // || req_id_rcv != request_id)
@@ -239,6 +245,10 @@ class MemcachedClient {
   uint8_t *tx_buff;
   uint8_t *rx_buff;
 
+#ifdef _USE_DPDK_CLIENT_
+  uint8_t *rx_packets[kMaxBurst];
+#endif
+
   // Recv thread and statistics for nonBlocking calls.
   volatile bool runRecvThread;
   std::thread recvThread;
@@ -259,6 +269,7 @@ class MemcachedClient {
   } __attribute__((packed));
   static_assert(sizeof(MemcacheUdpHeader) == 8);
 
+  // We use all bytes here to avoid issues with endianness (to be able to run on both x86 and ARM platforms).
   struct ReqHdr {
     uint8_t magic;
     uint8_t opcode;
@@ -294,7 +305,7 @@ class MemcachedClient {
                              {static_cast<uint8_t>((sequence_n >> 8) & 0xff),
                               static_cast<uint8_t>(sequence_n & 0xff)},
                              {0, 1},
-                             {0, 0}};
+                             {0xaa, 0x33}};
     std::memcpy(tx_buff, &hdr, sizeof(MemcacheUdpHeader));
 
     // Form packet.
@@ -343,7 +354,7 @@ class MemcachedClient {
                              {static_cast<uint8_t>((sequence_n >> 8) & 0xff),
                               static_cast<uint8_t>(sequence_n & 0xff)},
                              {0, 1},
-                             {0, 0}};
+                             {0xaa, 0x33}};
     std::memcpy(tx_buff, &hdr, sizeof(MemcacheUdpHeader));
 
     // Form packet.
@@ -377,13 +388,19 @@ class MemcachedClient {
   }
 
   Status parse_set_response(uint16_t *request_id, uint16_t *sequence_n) const {
+#ifdef _USE_DPDK_CLIENT_
+    uint8_t *rx_buff_ = (uint8_t*)(rx_packets[0]) + sizeof(struct rte_ether_hdr);
+#else
+    uint8_t *rx_buff_ = rx_buff;
+#endif
+
     const MemcacheUdpHeader *udp_hdr =
-        reinterpret_cast<MemcacheUdpHeader *>(rx_buff);
+        reinterpret_cast<MemcacheUdpHeader *>(rx_buff_);
     *request_id = (udp_hdr->request_id[1] << 8) | (udp_hdr->request_id[0]);
     *sequence_n = (udp_hdr->udp_sequence[1] << 8) | (udp_hdr->udp_sequence[0]);
 
     const RespHdr *rsp_hdr =
-        reinterpret_cast<RespHdr *>(rx_buff + sizeof(MemcacheUdpHeader));
+        reinterpret_cast<RespHdr *>(rx_buff_ + sizeof(MemcacheUdpHeader));
     if (rsp_hdr->magic != 0x81) {
       std::cerr << "Wrong response received: " << (int)(rsp_hdr->magic) << "\n";
       return kOtherError;
@@ -391,18 +408,30 @@ class MemcachedClient {
 
     Status status =
         static_cast<Status>(rsp_hdr->status[1] | (rsp_hdr->status[0] << 8));
+
+#ifdef _USE_DPDK_CLIENT_
+    // In DKD stack, we need to free packets here.
+    FreeDPDKPacket((struct rte_mbuf*)rx_buff_);
+#endif
+
     return status;
   }
 
   Status parse_get_response(uint16_t *request_id, uint16_t *sequence_n,
                             uint8_t *val, uint32_t *val_len) const {
+#ifdef _USE_DPDK_CLIENT_
+    uint8_t *rx_buff_ = (uint8_t*)(rx_packets[0]) + sizeof(struct rte_ether_hdr);
+#else
+    uint8_t *rx_buff_ = rx_buff;
+#endif
+
     const MemcacheUdpHeader *udp_hdr =
-        reinterpret_cast<MemcacheUdpHeader *>(rx_buff);
+        reinterpret_cast<MemcacheUdpHeader *>(rx_buff_);
     *request_id = (udp_hdr->request_id[1] << 8) | (udp_hdr->request_id[0]);
     *sequence_n = (udp_hdr->udp_sequence[1] << 8) | (udp_hdr->udp_sequence[0]);
 
     const RespHdr *rsp_hdr =
-        reinterpret_cast<RespHdr *>(rx_buff + sizeof(MemcacheUdpHeader));
+        reinterpret_cast<RespHdr *>(rx_buff_ + sizeof(MemcacheUdpHeader));
     if (rsp_hdr->magic != 0x81) {
       std::cerr << "Wrong response received!\n";
       return kOtherError;
@@ -420,12 +449,17 @@ class MemcachedClient {
                                 (rsp_hdr->total_body_length[0] << 24);
       uint32_t val_len_ = total_body_len - extra_len_ - key_len_;
       std::memcpy(val,
-                  rx_buff + sizeof(MemcacheUdpHeader) + sizeof(RespHdr) +
+                  rx_buff_ + sizeof(MemcacheUdpHeader) + sizeof(RespHdr) +
                       extra_len_ + key_len_,
                   val_len_);
 
       *val_len = val_len_;
     }
+
+#ifdef _USE_DPDK_CLIENT_
+    // In DKD stack, we need to free packets here.
+    FreeDPDKPacket((struct rte_mbuf*)(&rx_packets[0]));
+#endif
 
     return status;
   }
@@ -451,21 +485,23 @@ class MemcachedClient {
     return 0;
   }
 
-  void recv() {
+  int recv() {
 #ifdef _USE_DPDK_CLIENT_
+    return RecvOverDPDK(&dpdkObj, rx_packets);
 #else
     sockaddr_in serverAddress_rvc;
     socklen_t len;
     recvfrom(sock, rx_buff, kMaxPacketSize, 0,
              (struct sockaddr *)&serverAddress_rvc, &len);
+    return 1;
 #endif
   }
 
   // Runs in nonBlocking mode to receive responses.
   void recvCallback() {
     while (runRecvThread) {
-      recv();
-      ++nonBlockRecvStat.totalRecved;
+      int pckt_cnt = recv();
+      nonBlockRecvStat.totalRecved += pckt_cnt;
     }
   }
 };

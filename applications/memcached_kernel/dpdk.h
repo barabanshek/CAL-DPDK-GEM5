@@ -180,6 +180,12 @@ static int InitDPDK(struct DPDKObj* dpdk_obj) {
     return 0;
 }
 
+static void FreeDPDKPacket(struct rte_mbuf* pckt) {
+    rte_pktmbuf_free(pckt);
+}
+
+// Send a single packet containing the payload of size length over DPDK.
+// Returns success or fail.
 static int SendOverDPDK(struct DPDKObj* dpdk_obj, const struct rte_ether_addr* dst_mac, const uint8_t* payload, size_t length) {
     assert (sizeof(struct rte_ether_hdr) + length <= kMTUStandardFrames);
 
@@ -197,6 +203,7 @@ static int SendOverDPDK(struct DPDKObj* dpdk_obj, const struct rte_ether_addr* d
     struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
     rte_ether_addr_copy(&dpdk_obj->pmd_eth_addrs[dpdk_obj->pmd_port_to_use], &eth_hdr->s_addr);
     rte_ether_addr_copy(dst_mac, &eth_hdr->d_addr);
+    // We use will RTE_ETHER_TYPE_IPV4 header type to avoid any issues on the switch, but we won't actually use IP.
     eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 
     // Append data.
@@ -205,7 +212,8 @@ static int SendOverDPDK(struct DPDKObj* dpdk_obj, const struct rte_ether_addr* d
 
     // Send packet.
     const uint16_t burst_size = 1;
-    uint16_t pckt_sent = rte_eth_tx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], 0, &created_pkt, burst_size);
+    const uint16_t ring_id = 0;
+    uint16_t pckt_sent = rte_eth_tx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, &created_pkt, burst_size);
     if (pckt_sent != burst_size) {
       fprintf(stderr, "Failed to send packet.\n");
       rte_pktmbuf_free(created_pkt);
@@ -213,6 +221,33 @@ static int SendOverDPDK(struct DPDKObj* dpdk_obj, const struct rte_ether_addr* d
     }
 
     return 0;
+}
+
+// Receive one or many packets and store their payloads in payload.
+// Returns the number of packets received.
+static int RecvOverDPDK(struct DPDKObj* dpdk_obj, uint8_t **payload) {
+    struct rte_mbuf *packets[kMaxBurst];
+    const uint16_t ring_id = 0;
+    uint16_t received_pckt_cnt = 0;
+    while (received_pckt_cnt == 0) {
+        received_pckt_cnt = rte_eth_rx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, packets, kMaxBurst);
+    }
+
+    int total_pcks = 0;
+    for (int i=0; i<received_pckt_cnt; ++i) {
+        struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(packets[i], struct rte_ether_hdr *);
+        // Skip not our packets.
+        if (rte_be_to_cpu_16(eth_hdr->ether_type) != RTE_ETHER_TYPE_IPV4) {
+            FreeDPDKPacket(packets[i]);
+            continue;
+        }
+
+        // Store the payload pointers.
+        *(payload + total_pcks) = (uint8_t*)eth_hdr;
+        ++total_pcks;
+    }
+
+    return total_pcks;
 }
 
 #endif
