@@ -181,7 +181,7 @@ static int InitDPDK(struct DPDKObj* dpdk_obj) {
 }
 
 static void FreeDPDKPacket(struct rte_mbuf* pckt) {
-    rte_pktmbuf_free(pckt);
+    rte_pktmbuf_free_seg(pckt);
 }
 
 // Send a single packet containing the payload of size length over DPDK.

@@ -142,8 +142,6 @@ void parse_from_dpdk(const uint8_t *packet, struct DPDKObj *dpdk) {
     const uint8_t* pckt_data = packet + sizeof(struct rte_ether_hdr);
     struct MemcacheUdpHeader *hdr = (struct MemcacheUdpHeader*)pckt_data;
     if (hdr->RESERVED[0] != kMagicMagic[0] || hdr->RESERVED[1] != kMagicMagic[1]) {
-        // Not our packet, skip.
-        FreeDPDKPacket((struct rte_mbuf*)packet);
         return;
     }
     pckt_data += sizeof(struct MemcacheUdpHeader);
@@ -200,9 +198,6 @@ void parse_from_dpdk(const uint8_t *packet, struct DPDKObj *dpdk) {
         // Send it.
         SendOverDPDK(dpdk, &from_mac, rsp_buff, sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr) + value_len);
     }
-
-    // Free memory.
-    // FreeDPDKPacket((struct rte_mbuf*)packet);
 }
 
 int perform_set(const struct ReqHdr *p_hdr) {
@@ -6368,6 +6363,7 @@ int main (int argc, char **argv) {
         if (received_pckt_cnt == 0) continue;
         for (int i = 0; i < received_pckt_cnt; ++i) {
             parse_from_dpdk(packets[i], &dpdk);
+            FreeDPDKPacket((struct rte_mbuf*)(packets[i]));
         }
     }
 
