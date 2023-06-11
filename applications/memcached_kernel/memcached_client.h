@@ -420,6 +420,11 @@ class MemcachedClient {
     int pckt_n = 0;
     while (pckt_n == 0) {
       pckt_n = RecvOverDPDK(&dpdkObj, rx_packets);
+
+      // Break if the non-blocking mode stop requested.
+      // TODO (Niktia): I don't really like this impl..
+      if (dispatchMode == DispatchMode::kNonBlocking && !runRecvThread)
+        break;
     }
     return pckt_n;
 #else
