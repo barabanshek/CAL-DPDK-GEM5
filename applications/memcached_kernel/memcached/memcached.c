@@ -64,6 +64,7 @@
 #endif
 
 #include "../dpdk.h"
+#include "../helpers.h"
 
 /*
  * forward declarations
@@ -132,62 +133,29 @@ enum transmit_result {
     TRANSMIT_HARD_ERROR  /** Can't write (c->state is set to conn_closing) */
 };
 
-/* DPDK protocol functions */
-/* We use all bytes here to avoid issues with endianness(to be able to run
-   on both x86 and ARM platforms). */
-static const uint8_t kMagicMagic[2] = {0xaa, 0x33};
-struct MemcacheUdpHeader {
-  uint8_t request_id[2];
-  uint8_t udp_sequence[2];
-  uint8_t udp_total[2];
-  uint8_t RESERVED[2];
-} __attribute__((packed));
-
-struct ReqHdr {
-  uint8_t magic;
-  uint8_t opcode;
-  uint8_t key_length[2];
-  uint8_t extra_length;
-  uint8_t data_type;
-  uint8_t RESERVED[2];
-  uint8_t total_body_length[4];
-  uint8_t opaque[4];
-  uint8_t CAS[8];
-} __attribute__((packed));
-
-struct RespHdr {
-  uint8_t magic;
-  uint8_t opcode;
-  uint8_t key_length[2];
-  uint8_t extra_length;
-  uint8_t data_type;
-  uint8_t status[2];
-  uint8_t total_body_length[4];
-  uint8_t opaque[4];
-  uint8_t CAS[8];
-} __attribute__((packed));
-
 int perform_set(const struct ReqHdr *p_hdr);
 int perform_get(const struct ReqHdr *p_hdr, uint8_t** val, uint32_t *val_len);
 
 static uint8_t rsp_buff[4096];  // TODO: make it better!
-void parse_from_dpdk(const struct rte_ether_hdr *eth_hdr, const struct rte_ether_addr* from_mac, struct DPDKObj *dpdk) {
-    uint8_t* pckt_data = (uint8_t *)eth_hdr + sizeof(struct rte_ether_hdr);
+void parse_from_dpdk(const uint8_t *packet, struct DPDKObj *dpdk) {
+    const struct rte_ether_addr from_mac = ((struct rte_ether_hdr*)packet)->s_addr;
+    const uint8_t* pckt_data = packet + sizeof(struct rte_ether_hdr);
     struct MemcacheUdpHeader *hdr = (struct MemcacheUdpHeader*)pckt_data;
     if (hdr->RESERVED[0] != kMagicMagic[0] || hdr->RESERVED[1] != kMagicMagic[1]) {
         // Not our packet, skip.
         return;
     }
+    pckt_data += sizeof(struct MemcacheUdpHeader);
 
     // Parse type of request.
-    struct ReqHdr *p_hdr = (struct ReqHdr*)((uint8_t *)hdr + sizeof(struct MemcacheUdpHeader));
+    const struct ReqHdr *p_hdr = (struct ReqHdr*)pckt_data;
     if (p_hdr->opcode == 0x01) {
         // Set.
         int res = perform_set(p_hdr);
 
         // Prepare response.
         memcpy(rsp_buff, hdr, sizeof(struct MemcacheUdpHeader));
-        struct RespHdr *rsp_hdr = rsp_buff + sizeof(struct MemcacheUdpHeader);
+        struct RespHdr *rsp_hdr = (struct RespHdr *)(rsp_buff + sizeof(struct MemcacheUdpHeader));
         memset(rsp_hdr, 0x00, sizeof(struct RespHdr));
         rsp_hdr->magic = 0x81;
         rsp_hdr->opcode = 0x01;
@@ -200,15 +168,16 @@ void parse_from_dpdk(const struct rte_ether_hdr *eth_hdr, const struct rte_ether
         }
 
         // Send it.
-        SendOverDPDK(dpdk, from_mac, rsp_buff, sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr));
+        SendOverDPDK(dpdk, &from_mac, rsp_buff, sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr));
     } else if (p_hdr->opcode == 0x00) {
+        // Get.
         uint8_t *value;
         uint32_t value_len;
         int res = perform_get(p_hdr, &value, &value_len);
 
         // Prepare response.
         memcpy(rsp_buff, hdr, sizeof(struct MemcacheUdpHeader));
-        struct RespHdr *rsp_hdr = rsp_buff + sizeof(struct MemcacheUdpHeader);
+        struct RespHdr *rsp_hdr = (struct RespHdr *)(rsp_buff + sizeof(struct MemcacheUdpHeader));
         memset(rsp_hdr, 0x00, sizeof(struct RespHdr));
         rsp_hdr->magic = 0x81;
         rsp_hdr->opcode = 0x00;
@@ -228,7 +197,7 @@ void parse_from_dpdk(const struct rte_ether_hdr *eth_hdr, const struct rte_ether
         }
 
         // Send it.
-        SendOverDPDK(dpdk, from_mac, rsp_buff, sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr) + value_len);
+        SendOverDPDK(dpdk, &from_mac, rsp_buff, sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr) + value_len);
     }
 }
 
@@ -6403,20 +6372,11 @@ int main (int argc, char **argv) {
     }
     fprintf(stderr, "DPDK-version of memcached is ready to accept requests!\n");
 
-    const uint16_t kMaxBurstSize = 128;
-    struct rte_mbuf *packets[kMaxBurstSize];
+    uint8_t *packets[kMaxBurst];
     while (!stop_main_loop) {
-        uint16_t received_pckt_cnt = rte_eth_rx_burst(0, 0, packets, kMaxBurstSize);
-        if (received_pckt_cnt == 0) {
-            continue;
-        } else {
-            for (int i=0; i<received_pckt_cnt; ++i) {
-                struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(packets[i], struct rte_ether_hdr *);
-                if (rte_be_to_cpu_16(eth_hdr->ether_type) != RTE_ETHER_TYPE_IPV4)
-                    continue;
-                // Parse and perform server actions.
-                parse_from_dpdk(eth_hdr, &eth_hdr->s_addr, &dpdk);
-            }
+        uint16_t received_pckt_cnt = RecvOverDPDK(&dpdk, packets);
+        for (int i = 0; i < received_pckt_cnt; ++i) {
+            parse_from_dpdk(packets[i], &dpdk);
         }
     }
 
