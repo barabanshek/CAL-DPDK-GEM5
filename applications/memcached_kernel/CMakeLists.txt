@@ -24,7 +24,6 @@ find_package(gflags REQUIRED)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 SET (DPDK_LD_FLAGS "-fno-inline-atomics \
-        -lpthread \
         -Wl,--whole-archive \
         -l:librte_flow_classify.a \
         -l:librte_pipeline.a \
@@ -87,7 +86,8 @@ SET (DPDK_LD_FLAGS "-fno-inline-atomics \
         -lm \
         -latomic \
         -lmlx5 \
-        -libverbs")
+        -libverbs \
+        -lpthread")
 
 # Build memcached with DPDK (to run on a real system).
 if (USE_DPDK_NETWORKING)
@@ -106,7 +106,7 @@ if (USE_DPDK_NETWORKING)
         endif()
 
         add_custom_target(memcached ALL
-                        /usr/bin/make -f "${CMAKE_CURRENT_SOURCE_DIR}/memcached/Makefile" LDFLAGS=${DPDK_LD_FLAGS}
+                        /usr/bin/make -f "${CMAKE_CURRENT_SOURCE_DIR}/memcached/Makefile" CFLAGS=-fno-inline-atomics CFLAGS=-mssse3 LDFLAGS=${DPDK_LD_FLAGS}
                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/memcached)
 endif()
 

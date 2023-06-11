@@ -15,6 +15,7 @@
  */
 #include "memcached.h"
 #include "storage.h"
+#include "protocol_binary.h"
 #include "authfile.h"
 #include "restart.h"
 #include <sys/stat.h>
@@ -130,6 +131,176 @@ enum transmit_result {
     TRANSMIT_SOFT_ERROR, /** Can't write any more right now. */
     TRANSMIT_HARD_ERROR  /** Can't write (c->state is set to conn_closing) */
 };
+
+/* DPDK protocol functions */
+/* We use all bytes here to avoid issues with endianness(to be able to run
+   on both x86 and ARM platforms). */
+static const uint8_t kMagicMagic[2] = {0xaa, 0x33};
+struct MemcacheUdpHeader {
+  uint8_t request_id[2];
+  uint8_t udp_sequence[2];
+  uint8_t udp_total[2];
+  uint8_t RESERVED[2];
+} __attribute__((packed));
+
+struct ReqHdr {
+  uint8_t magic;
+  uint8_t opcode;
+  uint8_t key_length[2];
+  uint8_t extra_length;
+  uint8_t data_type;
+  uint8_t RESERVED[2];
+  uint8_t total_body_length[4];
+  uint8_t opaque[4];
+  uint8_t CAS[8];
+} __attribute__((packed));
+
+struct RespHdr {
+  uint8_t magic;
+  uint8_t opcode;
+  uint8_t key_length[2];
+  uint8_t extra_length;
+  uint8_t data_type;
+  uint8_t status[2];
+  uint8_t total_body_length[4];
+  uint8_t opaque[4];
+  uint8_t CAS[8];
+} __attribute__((packed));
+
+int perform_set(const struct ReqHdr *p_hdr);
+int perform_get(const struct ReqHdr *p_hdr, uint8_t** val, uint32_t *val_len);
+
+static uint8_t rsp_buff[4096];  // TODO: make it better!
+void parse_from_dpdk(const struct rte_ether_hdr *eth_hdr, const struct rte_ether_addr* from_mac, struct DPDKObj *dpdk) {
+    uint8_t* pckt_data = (uint8_t *)eth_hdr + sizeof(struct rte_ether_hdr);
+    struct MemcacheUdpHeader *hdr = (struct MemcacheUdpHeader*)pckt_data;
+    if (hdr->RESERVED[0] != kMagicMagic[0] || hdr->RESERVED[1] != kMagicMagic[1]) {
+        // Not our packet, skip.
+        return;
+    }
+
+    // Parse type of request.
+    struct ReqHdr *p_hdr = (struct ReqHdr*)((uint8_t *)hdr + sizeof(struct MemcacheUdpHeader));
+    if (p_hdr->opcode == 0x01) {
+        // Set.
+        int res = perform_set(p_hdr);
+
+        // Prepare response.
+        memcpy(rsp_buff, hdr, sizeof(struct MemcacheUdpHeader));
+        struct RespHdr *rsp_hdr = rsp_buff + sizeof(struct MemcacheUdpHeader);
+        memset(rsp_hdr, 0x00, sizeof(struct RespHdr));
+        rsp_hdr->magic = 0x81;
+        rsp_hdr->opcode = 0x01;
+        if (res == 0) {
+            // Send success.
+            rsp_hdr->status[0] = 0x00;
+        } else {
+            // Send failure.
+            rsp_hdr->status[0] = 0xff;
+        }
+
+        // Send it.
+        SendOverDPDK(dpdk, from_mac, rsp_buff, sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr));
+    } else if (p_hdr->opcode == 0x00) {
+        uint8_t *value;
+        uint32_t value_len;
+        int res = perform_get(p_hdr, &value, &value_len);
+
+        // Prepare response.
+        memcpy(rsp_buff, hdr, sizeof(struct MemcacheUdpHeader));
+        struct RespHdr *rsp_hdr = rsp_buff + sizeof(struct MemcacheUdpHeader);
+        memset(rsp_hdr, 0x00, sizeof(struct RespHdr));
+        rsp_hdr->magic = 0x81;
+        rsp_hdr->opcode = 0x00;
+        if (res == 0) {
+            // Send success.
+            uint32_t body_len = value_len;
+            rsp_hdr->total_body_length[0] = (body_len >> 24) & 0xff;
+            rsp_hdr->total_body_length[1] = (body_len >> 16) & 0xff;
+            rsp_hdr->total_body_length[2] = (body_len >> 8) & 0xff;
+            rsp_hdr->total_body_length[3] = (body_len) & 0xff;
+            rsp_hdr->status[0] = 0x00;
+            uint8_t *rsp_data = (uint8_t*)rsp_hdr + sizeof(struct RespHdr);
+            memcpy(rsp_data, value, value_len);
+        } else {
+            // Send failure.
+            rsp_hdr->status[0] = 0xff;
+        }
+
+        // Send it.
+        SendOverDPDK(dpdk, from_mac, rsp_buff, sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr) + value_len);
+    }
+}
+
+int perform_set(const struct ReqHdr *p_hdr) {
+    // Get sizes.
+    uint16_t key_len =
+        p_hdr->key_length[1] | (p_hdr->key_length[0] << 8);
+    uint8_t extra_len = p_hdr->extra_length;
+    uint32_t total_body_len = p_hdr->total_body_length[3] |
+                              (p_hdr->total_body_length[2] << 8) |
+                              (p_hdr->total_body_length[1] << 16) |
+                              (p_hdr->total_body_length[0] << 24);
+    uint32_t val_len = total_body_len - extra_len - key_len;
+    // fprintf(stderr, "SET: p_hdr.magic: %x, .keylen: %u, .vallen: %u\n", p_hdr->magic, key_len, val_len);
+
+    // Get data.
+    uint8_t* key = (uint8_t*)p_hdr + sizeof(struct ReqHdr) + extra_len;
+    uint8_t* val = (uint8_t*)key + key_len;
+
+    // Store.
+    // Allocate item.
+    item *it;
+    it = item_alloc(key, key_len, 0, realtime(60), val_len);
+    if (it == 0) {
+        return -1;
+    }
+
+    // Copy data.
+    uint64_t req_cas_id=0;
+    ITEM_set_cas(it, req_cas_id);
+    memcpy(ITEM_data(it), val, val_len);
+
+    // Link item in.
+    uint32_t hv;
+    hv = hash(ITEM_key(it), it->nkey);
+    item_lock(hv);
+    do_item_link(it, hv);
+    item_unlock(hv);
+
+    // Form successful response.
+    return 0;
+}
+
+int perform_get(const struct ReqHdr *p_hdr, uint8_t** val, uint32_t *val_len) {
+    // Get sizes.
+    uint16_t key_len =
+        p_hdr->key_length[1] | (p_hdr->key_length[0] << 8);
+    uint8_t extra_len = p_hdr->extra_length;
+    // fprintf(stderr, "GET: p_hdr.magic: %x, .keylen: %u\n", p_hdr->magic, key_len);
+
+    // Get data.
+    uint8_t* key = (uint8_t*)p_hdr + sizeof(struct ReqHdr) + extra_len;
+
+    // Look-up.
+    uint32_t hv;
+    hv = hash(key, key_len);
+    item_lock(hv);
+    item *it = assoc_find(key, key_len, hv);
+    if (it != NULL) {
+        refcount_incr(it);
+    }
+    item_unlock(hv);
+
+    // Return.
+    if (it != NULL) {
+        *val = ITEM_data(it);
+        *val_len = it->nbytes;
+        return 0;
+    } else {
+        return -1;
+    }
+}
 
 /* Default methods to read from/ write to a socket */
 ssize_t tcp_read(conn *c, void *buf, size_t count) {
@@ -6232,13 +6403,20 @@ int main (int argc, char **argv) {
     }
     fprintf(stderr, "DPDK-version of memcached is ready to accept requests!\n");
 
-    struct rte_mbuf *packets[128];
+    const uint16_t kMaxBurstSize = 128;
+    struct rte_mbuf *packets[kMaxBurstSize];
     while (!stop_main_loop) {
-        uint16_t received_pckt_cnt = rte_eth_rx_burst(0, 0, packets, 1);
+        uint16_t received_pckt_cnt = rte_eth_rx_burst(0, 0, packets, kMaxBurstSize);
         if (received_pckt_cnt == 0) {
             continue;
         } else {
-            fprintf(stderr, "Smth is recved!\n");
+            for (int i=0; i<received_pckt_cnt; ++i) {
+                struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(packets[i], struct rte_ether_hdr *);
+                if (rte_be_to_cpu_16(eth_hdr->ether_type) != RTE_ETHER_TYPE_IPV4)
+                    continue;
+                // Parse and perform server actions.
+                parse_from_dpdk(eth_hdr, &eth_hdr->s_addr, &dpdk);
+            }
         }
     }
 
