@@ -6365,6 +6365,7 @@ int main (int argc, char **argv) {
     uint8_t *packets[kMaxBurst];
     while (!stop_main_loop) {
         uint16_t received_pckt_cnt = RecvOverDPDK(&dpdk, packets);
+        if (received_pckt_cnt == 0) continue;
         for (int i = 0; i < received_pckt_cnt; ++i) {
             parse_from_dpdk(packets[i], &dpdk);
         }

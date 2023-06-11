@@ -225,13 +225,12 @@ static int SendOverDPDK(struct DPDKObj* dpdk_obj, const struct rte_ether_addr* d
 
 // Receive one or many packets and store their payloads in payload.
 // Returns the number of packets received.
+// This is a non-blocking call.
 static int RecvOverDPDK(struct DPDKObj* dpdk_obj, uint8_t **payload) {
     struct rte_mbuf *packets[kMaxBurst];
     const uint16_t ring_id = 0;
-    uint16_t received_pckt_cnt = 0;
-    while (received_pckt_cnt == 0) {
-        received_pckt_cnt = rte_eth_rx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, packets, kMaxBurst);
-    }
+    uint16_t received_pckt_cnt = rte_eth_rx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, packets, kMaxBurst);
+    if (received_pckt_cnt == 0) return 0;
 
     int total_pcks = 0;
     for (int i=0; i<received_pckt_cnt; ++i) {
