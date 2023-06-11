@@ -414,9 +414,14 @@ class MemcachedClient {
     return 0;
   }
 
+  // This is a blocking call.
   int recv() {
 #ifdef _USE_DPDK_CLIENT_
-    return RecvOverDPDK(&dpdkObj, rx_packets);
+    int pckt_n = 0;
+    while (pckt_n == 0) {
+      pckt_n = RecvOverDPDK(&dpdkObj, rx_packets);
+    }
+    return pckt_n;
 #else
     sockaddr_in serverAddress_rvc;
     socklen_t len;

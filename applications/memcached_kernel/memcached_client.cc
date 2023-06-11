@@ -148,6 +148,9 @@ int main(int argc, char* argv[]) {
   // Set dispatch semantics based on the configuration.
   client.setDispatchMode(FLAGS_blocking ? MemcachedClient::kBlocking
                                         : MemcachedClient::kNonBlocking);
+  // Wait a bit to run recv. thread.
+  static constexpr uint8_t kWaitForRecvThread = 1;
+  sleep(kWaitForRecvThread);
 
   struct timespec wrkl_start, wrkl_end;
   clock_gettime(CLOCK_MONOTONIC, &wrkl_start);
@@ -194,6 +197,10 @@ int main(int argc, char* argv[]) {
                        wrkl_end.tv_nsec - wrkl_start.tv_nsec;
   double wrkl_ns = wrkl_diff / (double)wrkl_size;
   double wrkl_avg_thr = kBillion * (1 / wrkl_ns);  // qps
+
+  // Wait a bit to get all responses.
+  static constexpr uint8_t kWaitForResps = 3;
+  sleep(kWaitForResps);
 
   std::cout << "Workload executed, some statistics: \n";
   std::cout << "   * total requests sent: " << wrkl_size << "\n";
