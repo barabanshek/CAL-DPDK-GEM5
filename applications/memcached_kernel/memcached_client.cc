@@ -56,7 +56,8 @@ int main(int argc, char* argv[]) {
 #else
   MemcachedClient client(FLAGS_server_ip, FLAGS_server_port, FLAGS_batching);
 #endif
-  client.Init();
+  int ret = client.Init();
+  if (ret) return -1;
 
   // Generate dataset.
   size_t ds_size = FLAGS_dataset_size;
