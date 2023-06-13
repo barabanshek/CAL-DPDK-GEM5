@@ -110,8 +110,8 @@ static void HelperParseGetReqHeader(const struct ReqHdr* hdr, uint8_t** key, uin
 }
 
 static size_t HelperParseUdpHeader(const struct MemcacheUdpHeader *udp_hdr, uint16_t *request_id, uint16_t *sequence_n) {
-    *request_id = (udp_hdr->request_id[1] << 8) | (udp_hdr->request_id[0]);
-    *sequence_n = (udp_hdr->udp_sequence[1] << 8) | (udp_hdr->udp_sequence[0]);
+    *request_id = (udp_hdr->request_id[0] << 8) | (udp_hdr->request_id[1]);
+    *sequence_n = (udp_hdr->udp_sequence[0] << 8) | (udp_hdr->udp_sequence[1]);
     return sizeof(struct MemcacheUdpHeader);
 }
 

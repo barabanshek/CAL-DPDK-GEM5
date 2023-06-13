@@ -1,6 +1,8 @@
 // This file containes the necessary routines to initialize
 // and work with DPDK. It's written in C to be able to link with
 // any application without issues and any extra steps.
+// 
+// The implementation enables zero-copy networking.
 
 #ifndef _DPDK_H_
 #define _DPDP_H_
@@ -13,25 +15,35 @@
 #include <rte_mbuf.h>
 #include <rte_ether.h>
 
-// DPDK struct.
-struct DPDKObj {
-    struct rte_mempool *mpool;
-    uint16_t pmd_port_cnt;
-    uint16_t pmd_ports[RTE_MAX_ETHPORTS];
-    struct rte_ether_addr pmd_eth_addrs[RTE_MAX_ETHPORTS];
-    uint16_t pmd_port_to_use;
-};
-
 // Global DPDK configs.
 static const char *kPacketMemPoolName = "dpdk_packet_mem_pool";
 
-static const size_t kDpdkArgcMax = 16;
-static const uint16_t kRingN = 1;
-static const uint16_t kRingDescN = 2048;
-static const uint16_t kMTUStandardFrames = 1500;
-static const uint16_t kMTUJumboFrames = 9000;
-static const uint64_t kLinkTimeOut_ms = 100;
-static const uint16_t kMaxBurst = 128;
+#define kRingN 1
+#define kRingDescN 2048
+#define kMTUStandardFrames 1500
+#define kMTUJumboFrames 9000
+#define kLinkTimeOut_ms 100
+#define kMaxBurstSize 128
+
+// Main DPDK struct.
+struct DPDKObj {
+    // Main mem pool for this DPDK object.
+    struct rte_mempool *mpool;
+
+    // Some port configs and parameters.
+    uint16_t pmd_port_cnt;
+    uint16_t pmd_ports[RTE_MAX_ETHPORTS];
+    struct rte_ether_addr pmd_eth_addrs[RTE_MAX_ETHPORTS];
+    uint16_t pmd_port_to_use;   // This port will be used throughout this object.
+
+    // TX and RX buffers.
+    uint16_t rx_burst_size;
+    uint16_t rx_burst_ptr;
+    struct rte_mbuf *rx_mbufs[kMaxBurstSize];
+    uint16_t tx_burst_size;
+    uint16_t tx_burst_ptr;
+    struct rte_mbuf *tx_mbufs[kMaxBurstSize];
+};
 
 // Initialize DPDK; it returns pmd ports to be used for
 // later communication.
@@ -180,59 +192,94 @@ static int InitDPDK(struct DPDKObj* dpdk_obj) {
     return 0;
 }
 
-static void FreeDPDKPacket(struct rte_mbuf* pckt) {
-    rte_pktmbuf_free(pckt);
+// Free rx buffers when data are not needed anymore.
+static void FreeDPDKRxBuffers(struct DPDKObj* dpdk_obj) {
+    rte_pktmbuf_free_bulk(dpdk_obj->rx_mbufs, dpdk_obj->rx_burst_size);
 }
 
-// Send a single packet containing the payload of size length over DPDK.
-// Returns success or fail.
-static int SendOverDPDK(struct DPDKObj* dpdk_obj, const struct rte_ether_addr* dst_mac, const uint8_t* payload, size_t length) {
-    assert (sizeof(struct rte_ether_hdr) + length <= kMTUStandardFrames);
+static void FreeDPDKPacket(struct rte_mbuf *packet) {
+    rte_pktmbuf_free(packet);
+}
 
-    // Create packet.
-    struct rte_mbuf *created_pkt = rte_pktmbuf_alloc(dpdk_obj->mpool);
-    if (created_pkt == NULL) {
-      fprintf(stderr, "Failed to get packet mbuf.\n");
-      return -1;
-    }
-    size_t pkt_size = sizeof(struct rte_ether_hdr) + length;
-    created_pkt->data_len = pkt_size;
-    created_pkt->pkt_len = pkt_size;
+// Allocate DPDK buffers for the transmission of batch_size packets.
+static int AllocateDPDKTxBuffers(struct DPDKObj* dpdk_obj, size_t batch_size) {
+    if (batch_size > kMaxBurstSize)
+        return -1;
 
-    // Append Ethernet header.
-    struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
-    rte_ether_addr_copy(&dpdk_obj->pmd_eth_addrs[dpdk_obj->pmd_port_to_use], &eth_hdr->s_addr);
-    rte_ether_addr_copy(dst_mac, &eth_hdr->d_addr);
-    // We use will RTE_ETHER_TYPE_IPV4 header type to avoid any issues on the switch, but we won't actually use IP.
-    eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
-
-    // Append data.
-    uint8_t* pckt_data = (uint8_t *)eth_hdr + sizeof(struct rte_ether_hdr);
-    memcpy(pckt_data, payload, length);
-
-    // Send packet.
-    const uint16_t burst_size = 1;
-    const uint16_t ring_id = 0;
-    uint16_t pckt_sent = rte_eth_tx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, &created_pkt, burst_size);
-    if (pckt_sent != burst_size) {
-      fprintf(stderr, "Failed to send packet.\n");
-      rte_pktmbuf_free(created_pkt);
-      return -1;
-    }
+    int ret = rte_pktmbuf_alloc_bulk(dpdk_obj->mpool, dpdk_obj->tx_mbufs, batch_size);
+    if (ret) return -1;
+    dpdk_obj->tx_burst_size = batch_size;
+    dpdk_obj->tx_burst_ptr = 0;
 
     return 0;
 }
 
-// Receive one or many packets and store their payloads in payload.
+// Get pointer to the next tx buffer from the pre-allocated burst pool.
+static struct rte_mbuf *GetNextDPDKTxBuffer(struct DPDKObj* dpdk_obj) {
+    if (dpdk_obj->tx_burst_ptr >= dpdk_obj->tx_burst_size)
+        return NULL;
+    struct rte_mbuf *mbuf = dpdk_obj->tx_mbufs[dpdk_obj->tx_burst_ptr];
+    ++dpdk_obj->tx_burst_ptr;
+    return mbuf;
+}
+
+// Get pointer to the payload
+static struct rte_mbuf* GetNextDPDKRxBuffer(struct DPDKObj* dpdk_obj) {
+    if (dpdk_obj->rx_burst_ptr >= dpdk_obj->rx_burst_size)
+        return NULL;
+    struct rte_mbuf *mbuf = dpdk_obj->rx_mbufs[dpdk_obj->rx_burst_ptr];
+    ++dpdk_obj->rx_burst_ptr;
+    return mbuf;
+}
+
+static uint8_t* ExtractPacketPayload(struct rte_mbuf * pckt) {
+    return rte_pktmbuf_mtod(pckt, uint8_t *) + sizeof(struct rte_ether_hdr);
+}
+
+static void AppendPacketHeader(struct DPDKObj* dpdk_obj, struct rte_mbuf *pckt, const struct rte_ether_addr* dst_mac, size_t length) {
+    // Packet header.
+    size_t pkt_size = sizeof(struct rte_ether_hdr) + length;
+    pckt->data_len = pkt_size;
+    pckt->pkt_len = pkt_size;
+
+    // Ethernet header.
+    struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(pckt, struct rte_ether_hdr *);
+    rte_ether_addr_copy(&dpdk_obj->pmd_eth_addrs[dpdk_obj->pmd_port_to_use], &eth_hdr->s_addr);
+    rte_ether_addr_copy(dst_mac, &eth_hdr->d_addr);
+    // We use will RTE_ETHER_TYPE_IPV4 header type to avoid any issues on the switch, but we won't actually use IP.
+    eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+}
+
+// Send a single packet containing the payload of size length over DPDK.
+// Returns success or fail.
+static int SendBatch(struct DPDKObj* dpdk_obj) {
+    // Send packet.
+    const uint16_t burst_size = dpdk_obj->tx_burst_size;
+    const uint16_t ring_id = 0;
+    uint16_t pckt_sent = rte_eth_tx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, dpdk_obj->tx_mbufs, burst_size);
+    if (pckt_sent != burst_size) {
+      fprintf(stderr, "Failed to send all %d packets, only %d was sent.\n", burst_size, pckt_sent);
+      rte_pktmbuf_free_bulk(dpdk_obj->tx_mbufs + pckt_sent, burst_size - pckt_sent);
+      return -1;
+    }
+
+    dpdk_obj->tx_burst_ptr = 0;
+    return 0;
+}
+
+// Receive one or many packets and store them in pckts.
 // Returns the number of packets received.
 // This is a non-blocking call.
-static int RecvOverDPDK(struct DPDKObj* dpdk_obj, struct rte_mbuf **pckts) {
-    struct rte_mbuf *packets[kMaxBurst];
+static int RecvOverDPDK(struct DPDKObj* dpdk_obj) {
+    struct rte_mbuf *packets[kMaxBurstSize];
     const uint16_t ring_id = 0;
-    uint16_t received_pckt_cnt = rte_eth_rx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, packets, kMaxBurst);
+    uint16_t received_pckt_cnt = rte_eth_rx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use],
+                                                  ring_id,
+                                                  packets, 
+                                                  kMaxBurstSize);
     if (received_pckt_cnt == 0) return 0;
 
-    int total_pcks = 0;
+    dpdk_obj->rx_burst_size = 0;
     for (int i=0; i<received_pckt_cnt; ++i) {
         struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(packets[i], struct rte_ether_hdr *);
         // Skip not our packets.
@@ -242,11 +289,12 @@ static int RecvOverDPDK(struct DPDKObj* dpdk_obj, struct rte_mbuf **pckts) {
         }
 
         // Store the payload pointers.
-        *(pckts + total_pcks) = packets[i];
-        ++total_pcks;
+        *(dpdk_obj->rx_mbufs + dpdk_obj->rx_burst_size) = packets[i];
+        ++dpdk_obj->rx_burst_size;
     }
 
-    return total_pcks;
+    dpdk_obj->rx_burst_ptr = 0;
+    return dpdk_obj->rx_burst_size;
 }
 
 #endif

@@ -38,41 +38,30 @@ class MemcachedClient {
     kOtherError = 0xff
   };
 
-  enum DispatchMode { kBlocking = 0x0, kNonBlocking = 0x1 };
-
 #ifdef _USE_DPDK_CLIENT_
   // Constructor for DPDK networking.
-  MemcachedClient(const std::string& server_mac_addr)
+  MemcachedClient(const std::string& server_mac_addr, uint16_t batch_size)
       : serverMacAddrStr(server_mac_addr),
-        tx_buff(nullptr),
-        dispatchMode(DispatchMode::kBlocking),
-        runRecvThread(false) {}
+        batchSize(batch_size),
+        currentBatch(0) {}
 #else
   // Constructor for Kernel networking.
-  MemcachedClient(const std::string &server_hostname, uint16_t port)
+  MemcachedClient(const std::string &server_hostname, uint16_t port, uint16_t batch_size)
       : serverHostname(server_hostname),
         port(port),
         sock(-1),
         rx_buff(nullptr),
         tx_buff(nullptr),
-        dispatchMode(DispatchMode::kBlocking),
-        runRecvThread(false) {}
+        batchSize(batch_size),
+        currentBatch(0) {}
 #endif
 
   ~MemcachedClient() {
-    if (dispatchMode == DispatchMode::kNonBlocking) {
-      if (runRecvThread) {
-        runRecvThread = false;
-        recvThread.join();
-      }
-    }
-
 #ifndef _USE_DPDK_CLIENT_
     if (sock != -1) close(sock);
     if (rx_buff != nullptr) std::free(rx_buff);
-#endif
-
     if (tx_buff != nullptr) std::free(tx_buff);
+#endif
   }
 
   int Init() {
@@ -116,14 +105,12 @@ class MemcachedClient {
       std::cerr << "Faile to set socket timeout." << std::endl;
       return -1;
     }
-#endif
 
     // Init buffers.
     tx_buff =
         static_cast<uint8_t *>(std::aligned_alloc(kClSize, kMaxPacketSize));
     assert(tx_buff != nullptr);
 
-#ifndef _USE_DPDK_CLIENT_
     rx_buff =
         static_cast<uint8_t *>(std::aligned_alloc(kClSize, kMaxPacketSize));
     assert(rx_buff != nullptr);
@@ -132,103 +119,113 @@ class MemcachedClient {
     return 0;
   }
 
-  // Set dispatch mode: if going from blocking (default) to non-blocking,
-  // spin-up recv thread; if going from non-blocking to blocking, stop it.
-  void setDispatchMode(DispatchMode dispatch_mode) {
-    if (dispatchMode == DispatchMode::kBlocking &&
-        dispatch_mode == DispatchMode::kNonBlocking) {
-      zeroOutRecvStat();
-      dispatchMode = DispatchMode::kNonBlocking;
-      runRecvThread = true;
-      recvThread = std::move(std::thread(&MemcachedClient::recvCallback, this));
-      std::cout << "Dispatch mode changed: bloking -> non-blocking\n";
-      return;
-    }
-
-    if (dispatchMode == DispatchMode::kNonBlocking &&
-        dispatch_mode == DispatchMode::kBlocking) {
-      if (runRecvThread) {
-        runRecvThread = false;
-        recvThread.join();
-      }
-      dispatchMode = DispatchMode::kBlocking;
-      std::cout << "Dispatch mode changed: non-bloking -> blocking\n";
-      return;
-    }
-  }
-
-  int set(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
+  int Set(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
           uint16_t key_len, const uint8_t *val, uint32_t val_len) {
-    uint32_t len = 0;
-    int res =
-        form_set(request_id, sequence_n, key, key_len, val, val_len, &len);
-    if (res != 0) return res;
+    // std::cout << "SET: \n";
+    // for (int i=0; i<key_len; ++i)
+    //   std::cout << (int)(*(key + i)) << " ";
+    // std::cout << "  |  ";
+    // for (int i=0; i<val_len; ++i)
+    //   std::cout << (int)(*(val + i)) << " ";
+    // std::cout << "\n";
 
-    res = send(len);
-    if (res != 0) return res;
+    int res = BatchOrAllocate();
+    if (res) return res;
 
-    if (dispatchMode == DispatchMode::kBlocking) {
-      uint16_t req_id_rcv;
-      uint16_t seq_n_recv;
-      int n_pcks = recv();
-      if (n_pcks != 1)
-        return -1;
+    res = FormSet(request_id, sequence_n, key, key_len, val, val_len);
+    if (res) return res;
 
-      int ret = parse_set_response(&req_id_rcv, &seq_n_recv);
-      if (ret != kOK)  // || req_id_rcv != request_id)
-        return -1;
-      else
-        return 0;
+    return BatchOrSend();
+  }
+
+  int Get(uint16_t request_id, uint16_t sequence_n, const uint8_t *key, uint16_t key_len) {
+    int res = BatchOrAllocate();
+    if (res) return res;
+
+    res = FormGet(request_id, sequence_n, key, key_len);
+    if (res) return res;
+
+    return BatchOrSend();
+  }
+
+  // Receive a batch of responses;
+  // Returns statuses for each SET and data for each GET in
+  // combination with the request_id.
+  void RecvResponses(std::vector<std::pair<uint16_t, Status>>* set_statuses,
+                    std::vector<std::pair<uint16_t, std::vector<uint8_t>>>* get_data) {
+    uint16_t total_recv_n = 0;
+
+    while (total_recv_n < batchSize) {
+      // Parse responses.
+      uint16_t recv_n = static_cast<uint16_t>(Recv());
+      for (uint16_t i = 0; i<recv_n; ++i) {
+        rte_mbuf* mbuf = GetNextDPDKRxBuffer(&dpdkObj);
+        assert(mbuf != nullptr);
+
+        uint8_t *rx_buff_ptr = ExtractPacketPayload(mbuf);
+
+        uint16_t request_id, sequence_n;
+        size_t h_size = HelperParseUdpHeader(reinterpret_cast<const MemcacheUdpHeader *>(rx_buff_ptr), &request_id, &sequence_n);
+        rx_buff_ptr += h_size;
+
+        const RespHdr *rsp_hdr = reinterpret_cast<const RespHdr *>(rx_buff_ptr);
+        if (rsp_hdr->magic != 0x81) {
+          std::cerr << "Wrong response received: " << static_cast<int>(rsp_hdr->magic) << "\n";
+          continue;
+        }
+
+        Status status =
+            static_cast<Status>(rsp_hdr->status[1] | (rsp_hdr->status[0] << 8));
+
+        if (rsp_hdr->opcode == 0x01) {
+          // SET.
+          set_statuses->push_back(std::make_pair(request_id, status));
+        } else if (rsp_hdr->opcode == 0x00) {
+          // GET.
+          get_data->push_back(std::make_pair(request_id, std::vector<uint8_t>()));
+          if (status == Status::kOK) {
+            uint32_t val_len;
+            size_t rh_size = HelperParseRspHeader(rsp_hdr, &val_len);
+            rx_buff_ptr += rh_size;
+
+            get_data->back().second.resize(val_len);
+            std::memcpy(get_data->back().second.data(), rx_buff_ptr, val_len);
+          }
+        } else {
+          // Weird opcode.
+          std::cerr << "Wrong response received: unexpected opcod.\n";
+          continue;
+        }
+        FreeDPDKPacket(mbuf);
+      }
+      total_recv_n += recv_n;
     }
+  }
 
+  // Append to a batch or allocate a new batch.
+  int BatchOrAllocate() {
+    if (currentBatch == 0) {
+      if (AllocateDPDKTxBuffers(&dpdkObj, batchSize)) {
+        std::cerr << "Failed to allocate packets for tx." << std::endl;
+        return -1;
+      }
+    }
     return 0;
   }
 
-  int get(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
-          uint16_t key_len, uint8_t *val_out, uint32_t *val_out_length) {
-    uint32_t len = 0;
-    int res = form_get(request_id, sequence_n, key, key_len, &len);
-    if (res != 0) return res;
-
-    res = send(len);
-    if (res != 0) return res;
-
-    if (dispatchMode == DispatchMode::kBlocking) {
-      assert(val_out != nullptr);
-      assert(val_out_length != nullptr);
-
-      uint16_t req_id_rcv;
-      uint16_t seq_n_recv;
-      int n_pcks = recv();
-      if (n_pcks != 1)
-        return -1;
-
-      int ret =
-          parse_get_response(&req_id_rcv, &seq_n_recv, val_out, val_out_length);
-      if (ret != kOK)  // || req_id_rcv != request_id)
-        return -1;
-      else
-        return 0;
+  // Append to a batch or send the batch.
+  int BatchOrSend() {
+    // Check if the batch is full and send.
+    if (currentBatch < batchSize - 1) {
+      ++currentBatch;
+    } else {
+      // Send it.
+      int res = Send();
+      currentBatch = 0;
+      if (res != 0)
+        return res;
     }
-
     return 0;
-  }
-
-  size_t dumpRecvStat() const {
-    if (dispatchMode == DispatchMode::kNonBlocking)
-      return nonBlockRecvStat.totalRecved;
-    else {
-      std::cout << "WARNING: attempting to read recv statistics for a blocking "
-                   "connection, this does not really make sense.\n";
-    }
-
-    return 0;
-  }
-
-  void zeroOutRecvStat() {
-    nonBlockRecvStat.totalRecved = 0;
-    nonBlockRecvStat.setRecved = 0;
-    nonBlockRecvStat.getRecved = 0;
   }
 
  private:
@@ -239,9 +236,6 @@ class MemcachedClient {
 
   // Main object storing DPDK-related low-level information.
   DPDKObj dpdkObj;
-
-  // Used to implement zero-copy packet recv. path.
-  rte_mbuf *rx_packets[kMaxBurst];
 #else
   // Full Linux UDP/IP stack here.
   std::string serverHostname;
@@ -251,30 +245,29 @@ class MemcachedClient {
   // Just a UNIX socket.
   int sock;
 
-  // Used to implement Kernel packet recv. path.
+  // Buffers to keep data.
   uint8_t *rx_buff;
+  uint8_t *tx_buff;
 #endif
 
-  // TX Buffer - same for both stacks.
-  uint8_t *tx_buff;
+  // Batching.
+  uint16_t batchSize;
+  size_t currentBatch;
 
-  // Blocking/Non-Blocking.
-  DispatchMode dispatchMode;
+  int FormSet(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
+               uint16_t key_len, const uint8_t *val, uint32_t val_len) {
+#ifdef _USE_DPDK_CLIENT_
+    // Get packet buffer.
+    struct rte_mbuf *pckt = GetNextDPDKTxBuffer(&dpdkObj);
+    if (pckt == nullptr) {
+      std::cerr << "Failed to get tx buffer for the packet.\n";
+      return -1;
+    }
 
-  // Recv thread and statistics for nonBlocking calls.
-  volatile bool runRecvThread;
-  std::thread recvThread;
-  struct NonBlockStat {
-    size_t totalRecved;
-    size_t setRecved;
-    size_t getRecved;
-  };
-  NonBlockStat nonBlockRecvStat;
-
-  int form_set(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
-               uint16_t key_len, const uint8_t *val, uint32_t val_len,
-               uint32_t *pckt_length) {
+    uint8_t *tx_buff_ptr = ExtractPacketPayload(pckt);
+#else
     uint8_t *tx_buff_ptr = tx_buff;
+#endif
 
     // Form memcached UDP header.
     size_t h_size = HelperFormUdpHeader(reinterpret_cast<MemcacheUdpHeader*>(tx_buff_ptr), request_id, sequence_n);
@@ -303,13 +296,27 @@ class MemcachedClient {
       return -1;
     }
 
-    *pckt_length = total_length;
+#ifdef _USE_DPDK_CLIENT_
+    AppendPacketHeader(&dpdkObj, pckt, &serverMacAddr, total_length);
+#endif
+
     return 0;
   }
 
-  int form_get(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
-               uint16_t key_len, uint32_t *pckt_length) {
+  int FormGet(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
+               uint16_t key_len) {
+#ifdef _USE_DPDK_CLIENT_
+    // Get packet buffer.
+    struct rte_mbuf *pckt = GetNextDPDKTxBuffer(&dpdkObj);
+    if (pckt == nullptr) {
+      std::cerr << "Failed to get tx buffer for the packet.\n";
+      return -1;
+    }
+
+    uint8_t *tx_buff_ptr = ExtractPacketPayload(pckt);
+#else
     uint8_t *tx_buff_ptr = tx_buff;
+#endif
 
     // Form memcached UDP header.
     size_t h_size = HelperFormUdpHeader(reinterpret_cast<MemcacheUdpHeader*>(tx_buff_ptr), request_id, sequence_n);
@@ -328,76 +335,16 @@ class MemcachedClient {
       std::cerr << "Packet size of " << total_length << " is too large\n";
       return -1;
     }
-  
-    *pckt_length = total_length;
+
+#ifdef _USE_DPDK_CLIENT_
+    AppendPacketHeader(&dpdkObj, pckt, &serverMacAddr, total_length);
+#endif
     return 0;
   }
 
-  Status parse_set_response(uint16_t *request_id, uint16_t *sequence_n) const {
+  int Send() {
 #ifdef _USE_DPDK_CLIENT_
-    rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(rx_packets[0], rte_ether_hdr *);
-    const uint8_t *rx_buff_ptr = reinterpret_cast<uint8_t*>(eth_hdr) + sizeof(struct rte_ether_hdr);
-#else
-    const uint8_t *rx_buff_ptr = rx_buff;
-#endif
-
-    size_t h_size = HelperParseUdpHeader(reinterpret_cast<const MemcacheUdpHeader *>(rx_buff_ptr), request_id, sequence_n);
-    rx_buff_ptr += h_size;
-
-    const RespHdr *rsp_hdr = reinterpret_cast<const RespHdr *>(rx_buff_ptr);
-    if (rsp_hdr->magic != 0x81) {
-      std::cerr << "Wrong response received: " << static_cast<int>(rsp_hdr->magic) << "\n";
-      return kOtherError;
-    }
-
-    Status status =
-        static_cast<Status>(rsp_hdr->status[1] | (rsp_hdr->status[0] << 8));
-
-#ifdef _USE_DPDK_CLIENT_
-    // In DPDK stack, we need to free packets here.
-    FreeDPDKPacket(rx_packets[0]);
-#endif
-
-    return status;
-  }
-
-  Status parse_get_response(uint16_t *request_id, uint16_t *sequence_n,
-                            uint8_t *val, uint32_t *val_len) const {
-#ifdef _USE_DPDK_CLIENT_
-    rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(rx_packets[0], rte_ether_hdr *);
-    const uint8_t *rx_buff_ptr = reinterpret_cast<uint8_t*>(eth_hdr) + sizeof(struct rte_ether_hdr);
-#else
-    uint8_t *rx_buff_ptr = rx_buff;
-#endif
-
-    size_t h_size = HelperParseUdpHeader(reinterpret_cast<const MemcacheUdpHeader *>(rx_buff_ptr), request_id, sequence_n);
-    rx_buff_ptr += h_size;
-
-    const RespHdr *rsp_hdr = reinterpret_cast<const RespHdr *>(rx_buff_ptr);
-    if (rsp_hdr->magic != 0x81) {
-      std::cerr << "Wrong response received!\n";
-      return kOtherError;
-    }
-
-    Status status =
-        static_cast<Status>(rsp_hdr->status[1] | (rsp_hdr->status[0] << 8));
-    if (status == kOK) {
-      size_t rh_size = HelperParseRspHeader(rsp_hdr, val_len);
-      rx_buff_ptr += rh_size;
-      std::memcpy(val, rx_buff_ptr, *val_len);
-    }
-
-#ifdef _USE_DPDK_CLIENT_
-    // In DKD stack, we need to free packets here.
-    FreeDPDKPacket(rx_packets[0]);
-#endif
-
-    return status;
-  }
-
-  int send(size_t length) {
-#ifdef _USE_DPDK_CLIENT_
-    int ret = SendOverDPDK(&dpdkObj, &serverMacAddr, tx_buff, length);
+    int ret = SendBatch(&dpdkObj);
     if (ret) {
       std::cerr << "Failed to send data to the server." << std::endl;
       return -1;
@@ -417,16 +364,11 @@ class MemcachedClient {
   }
 
   // This is a blocking call.
-  int recv() {
+  int Recv() {
 #ifdef _USE_DPDK_CLIENT_
     int pckt_n = 0;
     while (pckt_n == 0) {
-      pckt_n = RecvOverDPDK(&dpdkObj, rx_packets);
-
-      // Break if the non-blocking mode stop requested.
-      // TODO (Niktia): I don't really like this impl..
-      if (dispatchMode == DispatchMode::kNonBlocking && !runRecvThread)
-        break;
+      pckt_n = RecvOverDPDK(&dpdkObj);
     }
     return pckt_n;
 #else
@@ -438,16 +380,6 @@ class MemcachedClient {
 #endif
   }
 
-  // Runs in nonBlocking mode to receive responses.
-  void recvCallback() {
-    while (runRecvThread) {
-      int pckt_cnt = recv();
-      nonBlockRecvStat.totalRecved += static_cast<size_t>(pckt_cnt);
-      // Free packets.
-      for (int i=0; i<pckt_cnt; ++i)
-        FreeDPDKPacket(rx_packets[i]);
-    }
-  }
 };
 
 #endif
