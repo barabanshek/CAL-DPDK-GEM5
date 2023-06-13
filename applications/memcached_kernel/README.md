@@ -16,7 +16,8 @@ This will build Kernel-based KV-load generator (client) which can be used with t
 
 #### Run it
 * run *any* memcached server with `memcached -p 0 -U 11211`;
-* run the client as per the cmdline arguments shown in the source code;
+* run the client, example cmdline:
+    * `./memcached_client --server_ip=10.212.84.119 --batching=16 --dataset_size=5000 --dataset_key_size="10-100-0.9" --dataset_val_size="10-100-0.5" --populate_workload_size=2000 --workload_config="10000-0.8-10000" --check_get_correctness=false`
 * the Kernel version of the client does NOT record any trances, use smth like `tcpdump` for this if needed;
 * when using `tcpdump`, make sure you run things over the real network (NOT the loopback/localhost) and set the corresponding networking interface in tcpdump's `-i`; do NOT use `-i all`, as this will record traces incompatible with our gem5 loadgen. 
 
@@ -51,7 +52,8 @@ This will build Kernel-based KV-load generator (client) which can be used with t
 This should build both the DPDK-enabled client and the DPDK-patched memcached located at `memcached/` sub-folder of this folder.
 
 #### Run it
-* run the just built DPDK-patched memcached server with `memcached -p 0 -U 11211`;
+* run the just built DPDK-patched memcached server with `sudo memcached/memcached -u root`;
 * check that it printed the NIC/MAC address information to make sure DPDK is correctly set-up;
-* run the client in the same way as for the Kernel version;
+* run the client, example cmdline:
+    * `./memcached_client --server_mac="1c:34:da:41:cb:94" --batching=16 --dataset_size=5000 --dataset_key_size="10-100-0.9" --dataset_val_size="10-100-0.5" --populate_workload_size=2000 --workload_config="10000-0.8-10000" --check_get_correctness=false`
 * since Kernel-bypass stacks can not be captured with `tcpdump` in a portable way, the DPDK-enabled client will record its own `.pcap` trace file to be used in gem5.
