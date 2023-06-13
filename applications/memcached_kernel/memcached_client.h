@@ -65,6 +65,10 @@ class MemcachedClient {
   }
 
   int Init() {
+    if (batchSize > kMaxBurstSize) {
+      std::cerr << "The batching size of " << batchSize << " is too large.\n";
+      return -1;
+    }
     // Init networking.
 #ifdef _USE_DPDK_CLIENT_
     std::cout << "Initializing Kernel-bypass (DPDK) networking" << std::endl;
