@@ -7,6 +7,7 @@
 #include <random>
 #include <tuple>
 #include <vector>
+#include <map>
 
 DEFINE_string(server_mac, "11:22:33:44:55:66", "MAC address of the memcached server.");
 DEFINE_string(server_ip, "127.0.0.1", "IP address of the memcached server.");
@@ -23,6 +24,7 @@ DEFINE_uint32(populate_workload_size, 1000,
 DEFINE_string(workload_config, "100-0.9",
               "The workload to execute, format: "
               "<number_of_queries-GET/(SET+GET)>");
+DEFINE_bool(check_get_correctness, false, "Will check all data byte-by-byte for GETs if enabled. Can slow-down execution.");
 
 typedef std::vector<std::vector<uint8_t>> DSet;
 
@@ -41,7 +43,7 @@ void signal_callback_handler(int signum) {
 // ./memcached_client --server_ip=10.212.84.119 --batching=16
 // --dataset_size=5000 --dataset_key_size="10-100-0.9"
 // --dataset_val_size="10-100-0.5" --populate_workload_size=2000
-// --workload_config="10000-0.8-10000"
+// --workload_config="10000-0.8-10000" --check_get_correctness=false
 int main(int argc, char* argv[]) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
@@ -156,6 +158,7 @@ int main(int argc, char* argv[]) {
   size_t ok_set_responses_recved = 0;
   size_t ok_get_responses_recved = 0;
   batch_cnt = 0;
+  std::map<uint16_t, size_t> sent_get_idxs;
   struct timespec wrkl_start, wrkl_end;
   clock_gettime(CLOCK_MONOTONIC, &wrkl_start);
   for (size_t i = 0; i < wrkl_size; ++i) {
@@ -164,6 +167,8 @@ int main(int argc, char* argv[]) {
       // Execute GET.
       // Always hit in the cache, i.e. use a populated key.
       size_t random_key_idx = static_cast<size_t>(rand()) % populate_ds_size;
+      if (FLAGS_check_get_correctness)
+        sent_get_idxs[i] = random_key_idx;
       auto& key = dset_keys[random_key_idx];
       int res = client.Get(i, 0, key.data(), key.size());
     } else {
@@ -182,14 +187,25 @@ int main(int argc, char* argv[]) {
       client.RecvResponses(&set_statuses, &get_statuses);
 
       for (auto& s: set_statuses) {
+        // Just ckeck ret. status.
         if (s.second == MemcachedClient::kOK)
           ++ok_set_responses_recved;
       }
       for (auto& g: get_statuses) {
-        if (g.second.size() != 0)
-          ++ok_get_responses_recved;
+        if (g.second.size() != 0) {
+          // Check returned data.
+          if (FLAGS_check_get_correctness) {
+            size_t ds_idx = sent_get_idxs[g.first];
+            if (std::memcmp(dset_vals[ds_idx].data(), g.second.data(), g.second.size()) == 0)
+              ++ok_get_responses_recved;
+          } else {
+            ++ok_get_responses_recved;
+          }
+        }
       }
 
+      if (FLAGS_check_get_correctness)
+        sent_get_idxs.clear();
       batch_cnt = 0;
     }
   }

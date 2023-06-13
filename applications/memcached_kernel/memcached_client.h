@@ -202,32 +202,6 @@ class MemcachedClient {
     }
   }
 
-  // Append to a batch or allocate a new batch.
-  int BatchOrAllocate() {
-    if (currentBatch == 0) {
-      if (AllocateDPDKTxBuffers(&dpdkObj, batchSize)) {
-        std::cerr << "Failed to allocate packets for tx." << std::endl;
-        return -1;
-      }
-    }
-    return 0;
-  }
-
-  // Append to a batch or send the batch.
-  int BatchOrSend() {
-    // Check if the batch is full and send.
-    if (currentBatch < batchSize - 1) {
-      ++currentBatch;
-    } else {
-      // Send it.
-      int res = Send();
-      currentBatch = 0;
-      if (res != 0)
-        return res;
-    }
-    return 0;
-  }
-
  private:
 #ifdef _USE_DPDK_CLIENT_
   // We only need the MAC address for the DPDK stack.
@@ -339,6 +313,32 @@ class MemcachedClient {
 #ifdef _USE_DPDK_CLIENT_
     AppendPacketHeader(&dpdkObj, pckt, &serverMacAddr, total_length);
 #endif
+    return 0;
+  }
+
+  // Append to a batch or allocate a new batch.
+  int BatchOrAllocate() {
+    if (currentBatch == 0) {
+      if (AllocateDPDKTxBuffers(&dpdkObj, batchSize)) {
+        std::cerr << "Failed to allocate packets for tx." << std::endl;
+        return -1;
+      }
+    }
+    return 0;
+  }
+
+  // Append to a batch or send the batch.
+  int BatchOrSend() {
+    // Check if the batch is full and send.
+    if (currentBatch < batchSize - 1) {
+      ++currentBatch;
+    } else {
+      // Send it.
+      int res = Send();
+      currentBatch = 0;
+      if (res != 0)
+        return res;
+    }
     return 0;
   }
 
