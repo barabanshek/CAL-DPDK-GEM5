@@ -15,6 +15,9 @@
 
 #ifdef _USE_DPDK_CLIENT_
   #include <dpdk.h>
+  static constexpr uint16_t kMaxBatchSize = kMaxBurstSize;
+#else
+  static constexpr uint16_t kMaxBatchSize = 128;
 #endif
 
 #include <helpers.h>
@@ -50,8 +53,6 @@ class MemcachedClient {
       : serverHostname(server_hostname),
         port(port),
         sock(-1),
-        rx_buff(nullptr),
-        tx_buff(nullptr),
         batchSize(batch_size),
         currentBatch(0) {}
 #endif
@@ -59,13 +60,13 @@ class MemcachedClient {
   ~MemcachedClient() {
 #ifndef _USE_DPDK_CLIENT_
     if (sock != -1) close(sock);
-    if (rx_buff != nullptr) std::free(rx_buff);
-    if (tx_buff != nullptr) std::free(tx_buff);
+    for (auto& b: rx_buff) std::free(b.second);
+    for (auto& b: tx_buff) std::free(b.second);
 #endif
   }
 
   int Init() {
-    if (batchSize > kMaxBurstSize) {
+    if (batchSize > kMaxBatchSize) {
       std::cerr << "The batching size of " << batchSize << " is too large.\n";
       return -1;
     }
@@ -111,13 +112,17 @@ class MemcachedClient {
     }
 
     // Init buffers.
-    tx_buff =
-        static_cast<uint8_t *>(std::aligned_alloc(kClSize, kMaxPacketSize));
-    assert(tx_buff != nullptr);
+    for (uint16_t i=0; i<batchSize; ++i) {
+      uint8_t* tx_buff_ =
+          static_cast<uint8_t *>(std::aligned_alloc(kClSize, kMaxPacketSize));
+      assert(tx_buff_ != nullptr);
+      tx_buff.push_back(std::make_pair(0, tx_buff_));
 
-    rx_buff =
-        static_cast<uint8_t *>(std::aligned_alloc(kClSize, kMaxPacketSize));
-    assert(rx_buff != nullptr);
+      uint8_t* rx_buff_ =
+          static_cast<uint8_t *>(std::aligned_alloc(kClSize, kMaxPacketSize));
+      assert(rx_buff_ != nullptr);
+      rx_buff.push_back(std::make_pair(0, rx_buff_));
+    }
 #endif
 
     return 0;
@@ -163,10 +168,14 @@ class MemcachedClient {
       // Parse responses.
       uint16_t recv_n = static_cast<uint16_t>(Recv());
       for (uint16_t i = 0; i<recv_n; ++i) {
+#ifdef _USE_DPDK_CLIENT_
         rte_mbuf* mbuf = GetNextDPDKRxBuffer(&dpdkObj);
         assert(mbuf != nullptr);
-
         uint8_t *rx_buff_ptr = ExtractPacketPayload(mbuf);
+#else
+        assert(recv_n == batchSize);
+        uint8_t *rx_buff_ptr = rx_buff[recv_n - 1].second;
+#endif
 
         uint16_t request_id, sequence_n;
         size_t h_size = HelperParseUdpHeader(reinterpret_cast<const MemcacheUdpHeader *>(rx_buff_ptr), &request_id, &sequence_n);
@@ -200,7 +209,10 @@ class MemcachedClient {
           std::cerr << "Wrong response received: unexpected opcod.\n";
           continue;
         }
+
+#ifdef _USE_DPDK_CLIENT_
         FreeDPDKPacket(mbuf);
+#endif
       }
       total_recv_n += recv_n;
     }
@@ -214,6 +226,7 @@ class MemcachedClient {
 
   // Main object storing DPDK-related low-level information.
   DPDKObj dpdkObj;
+
 #else
   // Full Linux UDP/IP stack here.
   std::string serverHostname;
@@ -224,8 +237,9 @@ class MemcachedClient {
   int sock;
 
   // Buffers to keep data.
-  uint8_t *rx_buff;
-  uint8_t *tx_buff;
+  std::vector<std::pair<size_t, uint8_t *>> rx_buff;
+  std::vector<std::pair<size_t, uint8_t *>> tx_buff;
+
 #endif
 
   // Batching.
@@ -244,7 +258,7 @@ class MemcachedClient {
 
     uint8_t *tx_buff_ptr = ExtractPacketPayload(pckt);
 #else
-    uint8_t *tx_buff_ptr = tx_buff;
+    uint8_t *tx_buff_ptr = tx_buff[currentBatch].second;
 #endif
 
     // Form memcached UDP header.
@@ -276,6 +290,8 @@ class MemcachedClient {
 
 #ifdef _USE_DPDK_CLIENT_
     AppendPacketHeader(&dpdkObj, pckt, &serverMacAddr, total_length);
+#else
+    tx_buff[currentBatch].first = total_length;
 #endif
 
     return 0;
@@ -293,7 +309,7 @@ class MemcachedClient {
 
     uint8_t *tx_buff_ptr = ExtractPacketPayload(pckt);
 #else
-    uint8_t *tx_buff_ptr = tx_buff;
+    uint8_t *tx_buff_ptr = tx_buff[currentBatch].second;
 #endif
 
     // Form memcached UDP header.
@@ -316,18 +332,22 @@ class MemcachedClient {
 
 #ifdef _USE_DPDK_CLIENT_
     AppendPacketHeader(&dpdkObj, pckt, &serverMacAddr, total_length);
+#else
+    tx_buff[currentBatch].first = total_length;
 #endif
     return 0;
   }
 
   // Append to a batch or allocate a new batch.
   int BatchOrAllocate() {
+#ifdef _USE_DPDK_CLIENT_
     if (currentBatch == 0) {
       if (AllocateDPDKTxBuffers(&dpdkObj, batchSize)) {
         std::cerr << "Failed to allocate packets for tx." << std::endl;
         return -1;
       }
     }
+#endif
     return 0;
   }
 
@@ -354,13 +374,14 @@ class MemcachedClient {
       return -1;
     }
 #else
-    ssize_t bytesSent =
-        sendto(sock, tx_buff, length, MSG_CONFIRM,
-               (const struct sockaddr *)&serverAddress, sizeof(serverAddress));
-    if (bytesSent != length) {
-      std::cerr << "Failed to send data to the server." << std::endl;
-      close(sock);
-      return -1;
+    for (uint16_t i=0; i<batchSize; ++i) {
+      ssize_t bytesSent =
+          sendto(sock, tx_buff[i].second, tx_buff[i].first, MSG_CONFIRM,
+                (const struct sockaddr *)&serverAddress, sizeof(serverAddress));
+      if (bytesSent != tx_buff[i].first) {
+        std::cerr << "Failed to send data to the server." << std::endl;
+        return -1;
+      }
     }
 #endif
 
@@ -376,11 +397,13 @@ class MemcachedClient {
     }
     return pckt_n;
 #else
-    sockaddr_in serverAddress_rvc;
-    socklen_t len;
-    recvfrom(sock, rx_buff, kMaxPacketSize, 0,
-             (struct sockaddr *)&serverAddress_rvc, &len);
-    return 1;
+    for (uint16_t i=0; i<batchSize; ++i) {
+      sockaddr_in serverAddress_rvc;
+      socklen_t len;
+      recvfrom(sock, rx_buff[i].second, kMaxPacketSize, 0,
+              (struct sockaddr *)&serverAddress_rvc, &len);
+    }
+    return batchSize;
 #endif
   }
 
