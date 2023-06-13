@@ -259,7 +259,7 @@ static int SendBatch(struct DPDKObj* dpdk_obj) {
     uint16_t pckt_sent = rte_eth_tx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id, dpdk_obj->tx_mbufs, burst_size);
     if (pckt_sent != burst_size) {
       fprintf(stderr, "Failed to send all %d packets, only %d was sent.\n", burst_size, pckt_sent);
-      rte_pktmbuf_free_bulk(dpdk_obj->tx_mbufs + pckt_sent, burst_size - pckt_sent);
+      rte_pktmbuf_free_bulk(dpdk_obj->tx_mbufs + pckt_sent, (unsigned int)(burst_size - pckt_sent));
       return -1;
     }
 

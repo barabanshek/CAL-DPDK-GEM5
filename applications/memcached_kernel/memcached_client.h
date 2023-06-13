@@ -226,7 +226,7 @@ class MemcachedClient {
 
   // Batching.
   uint16_t batchSize;
-  size_t currentBatch;
+  uint16_t currentBatch;
 
   int FormSet(uint16_t request_id, uint16_t sequence_n, const uint8_t *key,
                uint16_t key_len, const uint8_t *val, uint32_t val_len) {

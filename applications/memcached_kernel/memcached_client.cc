@@ -141,25 +141,18 @@ int main(int argc, char* argv[]) {
 
   size_t wrkl_size;
   float wrkl_get_frac;
-  sscanf(FLAGS_workload_config.c_str(), "%lu-%f-%lu", &wrkl_size,
-         &wrkl_get_frac);
+  sscanf(FLAGS_workload_config.c_str(), "%lu-%f", &wrkl_size, &wrkl_get_frac);
   size_t num_of_unique_sets = ds_size - populate_ds_size;
   std::cout << "Executing workload of #queries: " << wrkl_size
             << ", GET/SET= " << wrkl_get_frac
             << ", unique SET keys: " << num_of_unique_sets << "\n";
-
-  size_t get_errors = 0;
-  size_t get_data_errors = 0;
-  size_t set_cnt = 0;
-  size_t set_errors = 0;
-  uint8_t val_ret[kMaxValSize];
-  uint32_t val_ret_length = 0;
 
   size_t ok_set_responses_recved = 0;
   size_t ok_get_responses_recved = 0;
   batch_cnt = 0;
   std::map<uint16_t, size_t> sent_get_idxs;
   struct timespec wrkl_start, wrkl_end;
+  size_t set_cnt = 0;
   clock_gettime(CLOCK_MONOTONIC, &wrkl_start);
   for (size_t i = 0; i < wrkl_size; ++i) {
     float get_set = rand() / (float)RAND_MAX;
@@ -170,13 +163,13 @@ int main(int argc, char* argv[]) {
       if (FLAGS_check_get_correctness)
         sent_get_idxs[i] = random_key_idx;
       auto& key = dset_keys[random_key_idx];
-      int res = client.Get(i, 0, key.data(), key.size());
+      client.Get(i, 0, key.data(), key.size());
     } else {
       // Execute SET.
       // Always miss in the cache, i.e. use an unpopulated key.
       size_t key_idx = populate_ds_size + (set_cnt % num_of_unique_sets);
-      int res = client.Set(i, 0, dset_keys[key_idx].data(), dset_keys[key_idx].size(),
-                     dset_vals[key_idx].data(), dset_vals[key_idx].size());
+      client.Set(i, 0, dset_keys[key_idx].data(), dset_keys[key_idx].size(),
+           dset_vals[key_idx].data(), dset_vals[key_idx].size());
     }
     ++batch_cnt;
 

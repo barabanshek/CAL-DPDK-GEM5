@@ -12,6 +12,7 @@ endif()
 # gcc setup.
 add_definitions(-std=c++17 -O3 -march=native)
 add_definitions(-Wall -Wextra -Wabi -Wsign-conversion -Wformat -Wformat-security)
+add_definitions(-Wno-deprecated-declarations)
 add_definitions(-pedantic)
 add_definitions(-fstack-protector -fPIE -fPIC)
 add_definitions(-Wno-unused-function)
@@ -106,7 +107,7 @@ if (USE_DPDK_NETWORKING)
         endif()
 
         add_custom_target(memcached ALL
-                        /usr/bin/make -f "${CMAKE_CURRENT_SOURCE_DIR}/memcached/Makefile" CFLAGS=-fno-inline-atomics CFLAGS=-mssse3 LDFLAGS=${DPDK_LD_FLAGS}
+                        /usr/bin/make -f "${CMAKE_CURRENT_SOURCE_DIR}/memcached/Makefile" CFLAGS=-fno-inline-atomics CFLAGS=-mssse3 CFLAGS+=-Wno-deprecated-declarations LDFLAGS=${DPDK_LD_FLAGS}
                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/memcached)
 endif()
 

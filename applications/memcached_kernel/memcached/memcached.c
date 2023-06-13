@@ -141,7 +141,7 @@ size_t process_through_memcached(uint8_t* rx_buff_ptr, uint8_t* tx_buff_ptr) {
     struct MemcacheUdpHeader *hdr = (struct MemcacheUdpHeader*)rx_buff_ptr;
     if (hdr->RESERVED[0] != kMagicMagic[0] || hdr->RESERVED[1] != kMagicMagic[1]) {
         fprintf(stderr, "Critical error: unexpexted packet received!\n");
-        return;
+        return 0;
     }
     rx_buff_ptr += sizeof(struct MemcacheUdpHeader);
     const struct ReqHdr *p_hdr = (struct ReqHdr*)rx_buff_ptr;
