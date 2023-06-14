@@ -227,7 +227,7 @@ static struct rte_mbuf *GetNextDPDKTxBuffer(struct DPDKObj *dpdk_obj) {
   return mbuf;
 }
 
-// Get pointer to the payload
+// Get pointer to the payload.
 static struct rte_mbuf *GetNextDPDKRxBuffer(struct DPDKObj *dpdk_obj) {
   if (dpdk_obj->rx_burst_ptr >= dpdk_obj->rx_burst_size)
     return NULL;
@@ -259,8 +259,7 @@ static void AppendPacketHeader(struct DPDKObj *dpdk_obj, struct rte_mbuf *pckt,
   eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 }
 
-// Send a single packet containing the payload of size length over DPDK.
-// Returns success or fail.
+// Send a batch of packets sitting so far in tx_mbuf's.
 static int SendBatch(struct DPDKObj *dpdk_obj) {
   // Send packet.
   const uint16_t burst_size = dpdk_obj->tx_burst_size;
