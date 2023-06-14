@@ -4,12 +4,13 @@
 
 #include <csignal>
 #include <iostream>
+#include <map>
 #include <random>
 #include <tuple>
 #include <vector>
-#include <map>
 
-DEFINE_string(server_mac, "11:22:33:44:55:66", "MAC address of the memcached server.");
+DEFINE_string(server_mac, "11:22:33:44:55:66",
+              "MAC address of the memcached server.");
 DEFINE_string(server_ip, "127.0.0.1", "IP address of the memcached server.");
 DEFINE_uint32(server_port, 11211, "UDP port of the memcached server.");
 DEFINE_uint32(dataset_size, 2000, "Total size of the dataset");
@@ -24,7 +25,9 @@ DEFINE_uint32(populate_workload_size, 1000,
 DEFINE_string(workload_config, "100-0.9",
               "The workload to execute, format: "
               "<number_of_queries-GET/(SET+GET)>");
-DEFINE_bool(check_get_correctness, false, "Will check all data byte-by-byte for GETs if enabled. Can slow-down execution.");
+DEFINE_bool(check_get_correctness, false,
+            "Will check all data byte-by-byte for GETs if enabled. Can "
+            "slow-down execution.");
 
 typedef std::vector<std::vector<uint8_t>> DSet;
 
@@ -44,7 +47,7 @@ void signal_callback_handler(int signum) {
 // --dataset_size=5000 --dataset_key_size="10-100-0.9"
 // --dataset_val_size="10-100-0.5" --populate_workload_size=2000
 // --workload_config="10000-0.8-10000" --check_get_correctness=false
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   // Register signal handler.
@@ -57,7 +60,8 @@ int main(int argc, char* argv[]) {
   MemcachedClient client(FLAGS_server_ip, FLAGS_server_port, FLAGS_batching);
 #endif
   int ret = client.Init();
-  if (ret) return -1;
+  if (ret)
+    return -1;
 
   // Generate dataset.
   size_t ds_size = FLAGS_dataset_size;
@@ -122,7 +126,7 @@ int main(int argc, char* argv[]) {
       std::vector<std::pair<uint16_t, std::vector<uint8_t>>> get_statuses;
       client.RecvResponses(&set_statuses, &get_statuses);
 
-      for (auto& s: set_statuses) {
+      for (auto &s : set_statuses) {
         if (s.second == MemcachedClient::kOK)
           ++ok_responses_recved;
       }
@@ -163,14 +167,14 @@ int main(int argc, char* argv[]) {
       size_t random_key_idx = static_cast<size_t>(rand()) % populate_ds_size;
       if (FLAGS_check_get_correctness)
         sent_get_idxs[i] = random_key_idx;
-      auto& key = dset_keys[random_key_idx];
+      auto &key = dset_keys[random_key_idx];
       client.Get(i, 0, key.data(), key.size());
     } else {
       // Execute SET.
       // Always miss in the cache, i.e. use an unpopulated key.
       size_t key_idx = populate_ds_size + (set_cnt % num_of_unique_sets);
       client.Set(i, 0, dset_keys[key_idx].data(), dset_keys[key_idx].size(),
-           dset_vals[key_idx].data(), dset_vals[key_idx].size());
+                 dset_vals[key_idx].data(), dset_vals[key_idx].size());
     }
     ++batch_cnt;
 
@@ -180,17 +184,18 @@ int main(int argc, char* argv[]) {
       std::vector<std::pair<uint16_t, std::vector<uint8_t>>> get_statuses;
       client.RecvResponses(&set_statuses, &get_statuses);
 
-      for (auto& s: set_statuses) {
+      for (auto &s : set_statuses) {
         // Just ckeck ret. status.
         if (s.second == MemcachedClient::kOK)
           ++ok_set_responses_recved;
       }
-      for (auto& g: get_statuses) {
+      for (auto &g : get_statuses) {
         if (g.second.size() != 0) {
           // Check returned data.
           if (FLAGS_check_get_correctness) {
             size_t ds_idx = sent_get_idxs[g.first];
-            if (std::memcmp(dset_vals[ds_idx].data(), g.second.data(), g.second.size()) == 0)
+            if (std::memcmp(dset_vals[ds_idx].data(), g.second.data(),
+                            g.second.size()) == 0)
               ++ok_get_responses_recved;
           } else {
             ++ok_get_responses_recved;
@@ -208,14 +213,15 @@ int main(int argc, char* argv[]) {
   long int wrkl_diff = kBillion * (wrkl_end.tv_sec - wrkl_start.tv_sec) +
                        wrkl_end.tv_nsec - wrkl_start.tv_nsec;
   double wrkl_ns = wrkl_diff / (double)wrkl_size;
-  double wrkl_avg_thr = kBillion * (1 / wrkl_ns);  // qps
+  double wrkl_avg_thr = kBillion * (1 / wrkl_ns); // qps
 
   std::cout << "Workload executed, some statistics: \n";
   std::cout << "   * total requests sent: " << wrkl_size << "\n";
   std::cout << "   * average sending throughput: " << wrkl_avg_thr << " qps\n";
   std::cout << "   * OK SET responses: " << ok_set_responses_recved << "\n";
   std::cout << "   * OK GET responses: " << ok_get_responses_recved << "\n";
-  std::cout << "   * OK total responses: " << ok_set_responses_recved + ok_get_responses_recved << "\n";
+  std::cout << "   * OK total responses: "
+            << ok_set_responses_recved + ok_get_responses_recved << "\n";
 
   return 0;
 }
