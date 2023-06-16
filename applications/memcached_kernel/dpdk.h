@@ -14,6 +14,7 @@
 #include <rte_ethdev.h>
 #include <rte_ether.h>
 #include <rte_mbuf.h>
+#include <rte_pdump.h>
 
 // Global DPDK configs.
 static const char *kPacketMemPoolName = "dpdk_packet_mem_pool";
@@ -57,9 +58,9 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
   dargv[dargv_cnt++] = (char *)"0-3";
   dargv[dargv_cnt++] = (char *)"-n";
   dargv[dargv_cnt++] = (char *)"4";
-  dargv[dargv_cnt++] = (char *)"--proc-type";
-  dargv[dargv_cnt++] = (char *)"auto";
-  dargv[dargv_cnt++] = (char *)"--no-huge";
+  // dargv[dargv_cnt++] = (char *)"--proc-type";
+  // dargv[dargv_cnt++] = (char *)"auto";
+  // dargv[dargv_cnt++] = (char *)"--no-huge";
 
   int ret = rte_eal_init(dargv_cnt, dargv);
   if (ret < 0) {
@@ -67,6 +68,14 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
     return -1;
   }
   fprintf(stderr, "EAL is initialized!\n");
+
+  
+  ret = rte_pdump_init();
+  if (ret) {
+    fprintf(stderr, "Failed to initialize pdump.\n");
+    return -1;
+  }
+  fprintf(stderr, "pdump initialized.\n");
 
   // Look-up NICs.
   int p_num = rte_eth_dev_count_avail();

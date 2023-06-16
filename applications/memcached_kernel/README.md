@@ -57,7 +57,10 @@ This should build both the DPDK-enabled client and the DPDK-patched memcached lo
 * run the client, example cmdline:
     * the only difference with the Kernel stack is the server address is the L2 here:
     * `./memcached_client --server_mac="1c:34:da:41:cb:94" --batching=16 --dataset_size=5000 --dataset_key_size="10-100-0.9" --dataset_val_size="10-100-0.5" --populate_workload_size=2000 --workload_config="10000-0.8-10000" --check_get_correctness=false`
-* since Kernel-bypass stacks can not be captured with `tcpdump` in a portable way, the DPDK-enabled client will record its own `.pcap` trace file to be used in gem5.
+* since Kernel-bypass stacks can not be captured with `tcpdump` in a portable way, use DPDK `pdump` based utility `dpdk_pcap`for this:
+    * **after** `memcached_client` is started, run `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,tx-dev=tx.pcap'` to capture `tx` traffic or `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,rx-dev=rx.pcap'` - for `rx`.
+    * the captured traces are in the standard PCAP format and can be accessed by tcpdump/wireshark or by a custom PCAP parser.
+
 
 #### Some results
 `key="10-100-0.9", val="10-100-0.9", get/set=0.9`

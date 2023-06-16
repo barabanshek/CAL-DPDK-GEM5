@@ -29,6 +29,7 @@ SET (DPDK_LD_FLAGS "-fno-inline-atomics \
         -l:librte_flow_classify.a \
         -l:librte_pipeline.a \
         -l:librte_pdump.a \
+        -l:librte_net_pcap.a \
         -l:librte_distributor.a \
         -l:librte_ip_frag.a \
         -l:librte_meter.a \
@@ -88,6 +89,7 @@ SET (DPDK_LD_FLAGS "-fno-inline-atomics \
         -latomic \
         -lmlx5 \
         -libverbs \
+        -lpcap \
         -lpthread")
 
 # Build memcached with DPDK (to run on a real system).
@@ -115,6 +117,15 @@ endif()
 if (USE_DPDK_NETWORKING)
         add_definitions("-D_USE_DPDK_CLIENT_")
         set(CMAKE_EXE_LINKER_FLAGS ${DPDK_LD_FLAGS})
+
+        # Build our own version of 'dpdk-pdump'; we need this as due to the
+        # issues of multi-processing in DPDK, both the primary process (i.e. memcached_client)
+        # and the secondary one (i.e. dpdk-pdump) must be built with exactly the same libs and configs.
+        # So it's better to build them together.
+        add_executable(dpdk_pcap dpdk_pcap.c)
+        target_compile_options(dpdk_pcap PRIVATE "-Wno-sign-conversion")
+        target_link_libraries(dpdk_pcap gflags)
 endif()
+
 add_executable(memcached_client memcached_client.cc)
 target_link_libraries(memcached_client gflags)
