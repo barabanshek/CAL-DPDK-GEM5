@@ -5,7 +5,8 @@
 This folder contains code for benchmarking memcached with Kernel and DPDK networking to later be used to run traces in gem5. The benchmark contains:
 - DPDK client based on both Kernel UDP and DPDK networking stacks;
 - configurable KV-store load generator based on zipf distribution;
-- DPDK-patched version of memcached server based on [e0e415b](https://github.com/memcached/memcached/commit/e0e415b7b2b43a6ddd01a9c3ad45fb46358d526b).
+- DPDK-patched version of memcached server based on [e0e415b](https://github.com/memcached/memcached/commit/e0e415b7b2b43a6ddd01a9c3ad45fb46358d526b);
+- patched version of `dpdk_pcap` to capture DPDK traces and store them in standard PCAP format.
 
 ### Setup instructions for Kernel stack
 
@@ -58,7 +59,7 @@ This should build both the DPDK-enabled client and the DPDK-patched memcached lo
     * the only difference with the Kernel stack is the server address is the L2 here:
     * `./memcached_client --server_mac="1c:34:da:41:cb:94" --batching=16 --dataset_size=5000 --dataset_key_size="10-100-0.9" --dataset_val_size="10-100-0.5" --populate_workload_size=2000 --workload_config="10000-0.8-10000" --check_get_correctness=false`
 * since Kernel-bypass stacks can not be captured with `tcpdump` in a portable way, use DPDK `pdump` based utility `dpdk_pcap`for this:
-    * **after** `memcached_client` is started, run `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,tx-dev=tx.pcap'` to capture `tx` traffic or `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,rx-dev=rx.pcap'` - for `rx`.
+    * **after** `memcached_client` is started, run `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,tx-dev=tx.pcap'` to capture `tx` traffic or `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,rx-dev=rx.pcap'` for `rx`;
     * the captured traces are in the standard PCAP format and can be accessed by tcpdump/wireshark or by a custom PCAP parser.
 
 
