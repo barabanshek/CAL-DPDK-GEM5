@@ -101,8 +101,7 @@ else
     usage
   fi
 
-  PORT=11211    # for memcached
-  PCAP_FILENAME="../memcached.pcap"
+  PCAP_FILENAME="../memcached_dpdk.pcap"
   ((INCR_INTERVAL = PACKET_RATE / 10))
   RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC"
   setup_dirs
@@ -110,7 +109,7 @@ else
   GEM5TYPE="opt"
   LOADGENMODE=${LOADGENMODE:-"Static"}
   DEBUG_FLAGS="--debug-flags=LoadgenDebug"
-  CONFIGARGS="$CACHE_CONFIG -r 3 --loadgen-type=Pcap --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=850000000000 --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLYMODE --loadgen-port-filter=$PORT --loadgen-increment-interva=$INCR_INTERVAL"
+  CONFIGARGS="$CACHE_CONFIG -r 3 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=850000000000 --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLYMODE --loadgen-increment-interva=$INCR_INTERVAL"
   run_simulation
   exit
 fi

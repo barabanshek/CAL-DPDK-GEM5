@@ -115,6 +115,7 @@ def addNoISAOptions(parser):
     parser.add_argument("--loadgen-mode", type=str, default="Static")
     parser.add_argument("--packet-size", type=int, default=1)
     # For Pcap loadgen:
+    parser.add_argument("--loadgen-stack", type=str, default="KernelStack")
     parser.add_argument("--loadgen_pcap_filename", type=str, default="")
     parser.add_argument("--loadgen-replymode", type=str, default="ReplyAndAdjustThroughput")
     parser.add_argument("--loadgen-port-filter", type=int, default=1)

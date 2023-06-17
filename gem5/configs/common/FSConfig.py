@@ -202,6 +202,7 @@ def makeArmSystem(mem_mode, machine_type, num_cpus=1, mdesc=None,
                                           mode = loadgen_kwargs['loadgen_mode']))
         elif load_generator_type == "Pcap":
             loadgens.append(LoadGeneratorPcap(pcap_filename = loadgen_kwargs['loadgen_pcap_filename'],
+                                              stack_mode = loadgen_kwargs['loadgen_stack_mode'],
                                               start_tick = loadgen_kwargs['loadgen_start'],
                                               stop_tick = loadgen_kwargs['loadgen_stop'],
                                               replay_mode = loadgen_kwargs['loadgen_replay_mode'],

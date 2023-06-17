@@ -28,6 +28,7 @@ class LoadGeneratorPcap : public SimObject {
   const uint8_t loadgenId;
 
   // General configs.
+  StackMode stackMode;
   LoadGenPcapInt *interface;
   const Tick startTick;
   const Tick stopTick;

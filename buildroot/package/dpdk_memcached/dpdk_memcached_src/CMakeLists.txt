@@ -10,7 +10,8 @@ SET (DPDK_C_FLAGS CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_eal/include"
                    CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_eal/arm/include"
                    CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_mbuf"
                    CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_mempool"
-                   CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_ring")
+                   CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_ring"
+                   CFLAGS+="-D_GEM5_")
 
 SET (DPDK_LD_FLAGS LDFLAGS+="-L$ENV{RTE_SDK}/build/drivers"
         LDFLAGS+="-L$ENV{RTE_SDK}/build/lib"

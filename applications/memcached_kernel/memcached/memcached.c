@@ -6356,8 +6356,14 @@ int main (int argc, char **argv) {
         fprintf(stderr, "Failed to initialize DPDK.\n");
         return -1;
     }
-    fprintf(stderr, "DPDK-version of memcached is ready to accept requests!\n");
 
+    /* If we are in simulation, take checkpoint here. */
+#ifdef _GEM5_
+    fprintf(stderr, "Taking post-initialization checkpoint.\n");
+    system("m5 checkpoint");
+#endif
+
+    fprintf(stderr, "DPDK-version of memcached is ready to accept requests!\n");
     while (!stop_main_loop) {
         uint16_t received_pckt_cnt = RecvOverDPDK(&dpdk);
         if (received_pckt_cnt == 0) continue;

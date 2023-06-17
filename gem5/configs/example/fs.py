@@ -128,6 +128,7 @@ def build_test_system(np):
                 num_nics=args.num_nics,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
+                loadgen_stack_mode=args.loadgen_stack,
                 load_generator_type="Pcap",
                 loadgen_pcap_filename=args.loadgen_pcap_filename,
                 loadgen_start=args.loadgen_start,
