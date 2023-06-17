@@ -55,12 +55,11 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
   int dargv_cnt = 0;
   char *dargv[kDpdkArgcMax];
   dargv[dargv_cnt++] = (char *)"-l";
-  dargv[dargv_cnt++] = (char *)"0-3";
+  dargv[dargv_cnt++] = (char *)"0";
   dargv[dargv_cnt++] = (char *)"-n";
-  dargv[dargv_cnt++] = (char *)"4";
-  // dargv[dargv_cnt++] = (char *)"--proc-type";
-  // dargv[dargv_cnt++] = (char *)"auto";
-  // dargv[dargv_cnt++] = (char *)"--no-huge";
+  dargv[dargv_cnt++] = (char *)"1";
+  dargv[dargv_cnt++] = (char *)"--proc-type";
+  dargv[dargv_cnt++] = (char *)"auto";
 
   int ret = rte_eal_init(dargv_cnt, dargv);
   if (ret < 0) {
