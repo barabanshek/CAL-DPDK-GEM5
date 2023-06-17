@@ -38,9 +38,6 @@ static volatile bool kCtlzArmed = false;
 void signal_callback_handler(int signum) {
   (void)(signum);
   kCtlzArmed = true;
-
-  // De-register the signal.
-  signal(SIGINT, SIG_DFL);
 }
 
 // ./memcached_client --server_ip=10.212.84.119 --batching=16
@@ -103,6 +100,14 @@ int main(int argc, char *argv[]) {
   }
   std::cout << "Dataset generated.\n";
 
+  // Execute the load.
+  std::cout << "Now you can run PCAP trace recorder.\n";
+  std::cout << "Press <Ctrl-C> to populate server with the workload...\n";
+  while (!kCtlzArmed) {
+    sleep(1);
+  }
+  kCtlzArmed = false;
+
   // Populate memcached server with the dataset.
   size_t populate_ds_size = FLAGS_populate_workload_size;
   if (populate_ds_size > ds_size) {
@@ -139,10 +144,13 @@ int main(int argc, char *argv[]) {
             << " OK response count: " << ok_responses_recved << "\n";
 
   // Execute the load.
+  std::cout << "If you want a separate trace for the workoad benchark, now it's a good time to start capturing it.\n";
   std::cout << "Press <Ctrl-C> to execute the workload...\n";
   while (!kCtlzArmed) {
     sleep(1);
   }
+  // De-register the signal.
+  signal(SIGINT, SIG_DFL);
 
   size_t wrkl_size;
   float wrkl_get_frac;
