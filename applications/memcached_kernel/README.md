@@ -27,13 +27,10 @@ This will build Kernel-based KV-load generator (client) which can be used with t
 ##### Mellanox ConnectX-5 NIC (tested in CloudLab `d6515` instance)
 * download DPDK 20.11.3 from here: https://fast.dpdk.org/rel/
     * unpack to, say `dpdk-stable-20.11.3`
-* install `libibverbs-dev`:
-    * `sudo apt install libibverbs-dev`;
-* clone RDMA-core from here: https://github.com/linux-rdma/rdma-core;
-    * move to, say `rdma-core`
-    * install RDMA-core as per instructions in the repo;
-    * make sure the RDMA-core libraries are visible to `meson`, the only way I made it to work is by symlinking all libraries from `rdma-core/build/lib` to `/usr/local/lib/`;
-    * alternatively install RDMA-core via apt: `sudo apt-get install rdma-core`, but in this case, there might be issues finding libraries
+* install dependencies:
+    * `sudo apt-get install rdma-core`
+    * `sudo apt install libibverbs-dev`
+    * `sudo apt install libevent-dev`
 * build DPDK:
     * `cd dpdk-stable-20.11.3`
     * `meson setup build`
@@ -53,13 +50,16 @@ This will build Kernel-based KV-load generator (client) which can be used with t
 This should build both the DPDK-enabled client and the DPDK-patched memcached located at `memcached/` sub-folder of this folder.
 
 #### Run it
+* install huge pages:
+    * `sudo su`
+    * `echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages`
 * run the just built DPDK-patched memcached server with `sudo memcached/memcached -u root`;
 * check that it printed the NIC/MAC address information to make sure DPDK is correctly set-up;
 * run the client, example cmdline:
     * the only difference with the Kernel stack is the server address is the L2 here:
-    * `./memcached_client --server_mac="1c:34:da:41:cb:94" --batching=16 --dataset_size=5000 --dataset_key_size="10-100-0.9" --dataset_val_size="10-100-0.5" --populate_workload_size=2000 --workload_config="10000-0.8-10000" --check_get_correctness=false`
+    * `./memcached_client --server_mac="1c:34:da:41:cb:94" --batching=16 --dataset_size=5000 --dataset_key_size="10-100-0.9" --dataset_val_size="10-100-0.5" --populate_workload_size=2000 --workload_config="10000-0.8" --check_get_correctness=false`
 * since Kernel-bypass stacks can not be captured with `tcpdump` in a portable way, use DPDK `pdump` based utility `dpdk_pcap`for this:
-    * **after** `memcached_client` is started, run `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,tx-dev=tx.pcap'` to capture `tx` traffic or `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,rx-dev=rx.pcap'` for `rx`;
+    * **after** `memcached_client` is started, run `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,tx-dev=tx.pcap, rx-dev=rx.pcap'`
     * the captured traces are in the standard PCAP format and can be accessed by tcpdump/wireshark or by a custom PCAP parser.
 
 
