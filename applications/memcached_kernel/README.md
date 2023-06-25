@@ -28,7 +28,7 @@ This will build Kernel-based KV-load generator (client) which can be used with t
 * download DPDK 20.11.3 from here: https://fast.dpdk.org/rel/
     * unpack to, say `dpdk-stable-20.11.3`
 * install dependencies:
-    * `sudo apt-get install rdma-core`
+    * `sudo apt install rdma-core`
     * `sudo apt install libibverbs-dev`
     * `sudo apt install libevent-dev`
 * build DPDK:
@@ -37,7 +37,7 @@ This will build Kernel-based KV-load generator (client) which can be used with t
     * **IMPORTANT**: make sure the `Drivers Enabled` section of the output shows `mlx4, mlx5` drivers in it, otherwise DPDK will fail to detect the NICs
     * `cd build`
     * `ninja`
-    * `ninja install`
+    * `sudo ninja install`
 * build things:
     * export DPDK and RDMA-core library path:
         * `export RTE_SDK=/<FULL_PATH>/dpdk-stable-20.11.3`
