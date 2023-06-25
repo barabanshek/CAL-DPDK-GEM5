@@ -17,6 +17,7 @@ This will build Kernel-based KV-load generator (client) which can be used with t
 
 #### Run it
 * run *any* memcached server with `memcached -p 0 -U 11211`;
+* when stress-testing, add `-m 1024` to run memcached with more memory limit;
 * run the client, example cmdline:
     * `./memcached_client --server_ip=10.212.84.119 --batching=16 --dataset_size=5000 --dataset_key_size="10-100-0.9" --dataset_val_size="10-100-0.5" --populate_workload_size=2000 --workload_config="10000-0.8-10000" --check_get_correctness=false`
 * the Kernel version of the client does NOT record any trances, use smth like `tcpdump` for this if needed;
@@ -55,7 +56,7 @@ This should build both the DPDK-enabled client and the DPDK-patched memcached lo
 * install huge pages:
     * `sudo su`
     * `echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages`
-* run the just built DPDK-patched memcached server with `sudo memcached/memcached -u root`;
+* run the just built DPDK-patched memcached server with `sudo memcached/memcached -u root -m 1024`;
 * check that it printed the NIC/MAC address information to make sure DPDK is correctly set-up;
 * run the client, example cmdline:
     * the only difference with the Kernel stack is the server address is the L2 here:
