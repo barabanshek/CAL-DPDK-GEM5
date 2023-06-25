@@ -24,6 +24,8 @@ This will build Kernel-based KV-load generator (client) which can be used with t
 
 
 ### Setup instructions for DPDK
+##### If you are on CloudLab's `d6515`, just run `./setup_cloudlab.sh`
+
 ##### Mellanox ConnectX-5 NIC (tested in CloudLab `d6515` instance)
 * download DPDK 20.11.3 from here: https://fast.dpdk.org/rel/
     * unpack to, say `dpdk-stable-20.11.3`
