@@ -62,7 +62,8 @@ This should build both the DPDK-enabled client and the DPDK-patched memcached lo
     * the only difference with the Kernel stack is the server address is the L2 here:
     * `./memcached_client --server_mac="1c:34:da:41:cb:94" --batching=16 --dataset_size=5000 --dataset_key_size="10-100-0.9" --dataset_val_size="10-100-0.5" --populate_workload_size=2000 --workload_config="10000-0.8" --check_get_correctness=false`
 * since Kernel-bypass stacks can not be captured with `tcpdump` in a portable way, use DPDK `pdump` based utility `dpdk_pcap`for this:
-    * **after** `memcached_client` is started, run `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,tx-dev=tx.pcap, rx-dev=rx.pcap'`
+    * **after** `memcached_client` is started, run `sudo ./dpdk_pcap -- --pdump 'port=0,queue=*,tx-dev=tx.pcap,rx-dev=rx.pcap'`
+    * **Important:** do NOT use spaces in `--pdump` arguments
     * the captured traces are in the standard PCAP format and can be accessed by tcpdump/wireshark or by a custom PCAP parser.
 
 
