@@ -6369,7 +6369,13 @@ int main (int argc, char **argv) {
         if (received_pckt_cnt == 0) continue;
 
         // Prepare response buffer.
-        AllocateDPDKTxBuffers(&dpdk, received_pckt_cnt);
+        int res = AllocateDPDKTxBuffers(&dpdk, received_pckt_cnt);
+        if (res) {
+            fprintf(stderr,
+                    "Failed to allocate DPDK tx buffers (received_pckt_cnt=%d), exiting here...\n",
+                    received_pckt_cnt);
+            return -1;
+        }
 
         for (int i = 0; i < received_pckt_cnt; ++i) {
             struct rte_mbuf *rx_mbuf = GetNextDPDKRxBuffer(&dpdk);
@@ -6383,14 +6389,19 @@ int main (int argc, char **argv) {
             size_t rsp_pckt_size = process_through_memcached(rx_buff_ptr, tx_buff_ptr);
 
             // Swap MAC addresses and set packet parameters.
-            struct rte_ether_addr client_addr = rte_pktmbuf_mtod(rx_mbuf, struct rte_ether_hdr *)->s_addr;
+            struct rte_ether_addr client_addr =
+                                rte_pktmbuf_mtod(rx_mbuf, struct rte_ether_hdr *)->s_addr;
             AppendPacketHeader(&dpdk, tx_mbuf, &client_addr, rsp_pckt_size);
 
             FreeDPDKPacket(rx_mbuf);
         }
 
         // Send response.
-        SendBatch(&dpdk);
+        res = SendBatch(&dpdk);
+        if (res) {
+            fprintf(stderr, "Failed to send, exiting here...\n");
+            return -1;
+        }
     }
 
     /* enter the event loop */

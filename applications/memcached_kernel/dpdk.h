@@ -68,7 +68,6 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
   }
   fprintf(stderr, "EAL is initialized!\n");
 
-  
   ret = rte_pdump_init();
   if (ret) {
     fprintf(stderr, "Failed to initialize pdump.\n");
@@ -275,6 +274,15 @@ static int SendBatch(struct DPDKObj *dpdk_obj) {
   uint16_t pckt_sent =
       rte_eth_tx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id,
                        dpdk_obj->tx_mbufs, burst_size);
+#ifdef _GEM5_
+  // For some reason, in gem5, rte_eth_tx_burst does not release mbufs for even
+  // sent packets. We need to free all of them here.
+  for (uint16_t i = 0; i < burst_size; ++i) {
+    rte_pktmbuf_free(dpdk_obj->tx_mbufs + i);
+  }
+#else
+  // In a real system (and mlx NICs), we only need to free packets which got
+  // failed to send.
   if (pckt_sent != burst_size) {
     fprintf(stderr, "Failed to send all %d packets, only %d was sent.\n",
             burst_size, pckt_sent);
@@ -282,6 +290,7 @@ static int SendBatch(struct DPDKObj *dpdk_obj) {
                           (unsigned int)(burst_size - pckt_sent));
     return -1;
   }
+#endif
 
   dpdk_obj->tx_burst_ptr = 0;
   return 0;
@@ -299,8 +308,21 @@ static int RecvOverDPDK(struct DPDKObj *dpdk_obj) {
   if (received_pckt_cnt == 0)
     return 0;
 
+  uint16_t received_pckt_cnt_clip = received_pckt_cnt;
+  if (received_pckt_cnt > kMaxBurstSize) {
+    fprintf(stderr,
+            "Received %u packets, but max burst=%u; dropping %u packets...\n",
+            received_pckt_cnt, kMaxBurstSize,
+            received_pckt_cnt - kMaxBurstSize);
+    received_pckt_cnt_clip = kMaxBurstSize;
+
+    // Free packets which are not going to be processed.
+    for (uint16_t i = kMaxBurstSize; i < received_pckt_cnt; ++i)
+      FreeDPDKPacket(packets[i]);
+  }
+
   dpdk_obj->rx_burst_size = 0;
-  for (int i = 0; i < received_pckt_cnt; ++i) {
+  for (int i = 0; i < received_pckt_cnt_clip; ++i) {
     struct rte_ether_hdr *eth_hdr =
         rte_pktmbuf_mtod(packets[i], struct rte_ether_hdr *);
     // Skip not our packets.
